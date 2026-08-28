@@ -1,0 +1,58 @@
+[package]
+name = "postgres-jsonb-canonical-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+postgres-jsonb-canonical = { path = ".." }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+
+[[bin]]
+name = "encode_deterministic"
+path = "fuzz_targets/encode_deterministic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "equivalence_encoding"
+path = "fuzz_targets/equivalence_encoding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "number_spellings"
+path = "fuzz_targets/number_spellings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "object_permutations"
+path = "fuzz_targets/object_permutations.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "encode_into_rollback"
+path = "fuzz_targets/encode_into_rollback.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "deep_and_wide"
+path = "fuzz_targets/deep_and_wide.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

@@ -1,0 +1,93 @@
+name: Scheduled
+
+# The gates that are too slow to sit in front of a push. Mutation testing walks the whole
+# suite once per mutant, and a fuzz campaign is only worth running for longer than a smoke
+# test, so both run overnight instead.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  mutants:
+    name: mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-mutants
+      - uses: Swatinem/rust-cache@v2
+      # The differential suite is excluded: a PostgreSQL round trip per mutant would take
+      # days, and the mutations all live in the canonicalization code that the fast suites
+      # already cover.
+      - name: Mutate
+        run: |
+          cargo mutants --no-shuffle --test-tool cargo -- \
+            --release --lib --test golden --test contract \
+            --test properties --test allocations
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants
+          path: mutants.out
+
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - encode_deterministic
+          - equivalence_encoding
+          - number_spellings
+          - object_permutations
+          - encode_into_rollback
+          - deep_and_wide
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target\nfuzz -> target"
+          key: fuzz-${{ matrix.target }}
+      # The corpus carries over between runs, so each night starts from the coverage the
+      # previous nights reached instead of from nothing.
+      - uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: corpus-${{ matrix.target }}-
+      - run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=1800 -rss_limit_mb=4096
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts
+
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Archived, never gated on. A shared runner is far too noisy to fail a build over,
+      # and the real baseline lives on the project workstation.
+      - run: cargo bench --bench canonical -- --warm-up-time 1 --measurement-time 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion
+          path: target/criterion

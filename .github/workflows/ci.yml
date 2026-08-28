@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      # The fuzz targets are a separate workspace and are not reached by the command above.
+      - run: cargo fmt --all --manifest-path fuzz/Cargo.toml -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The differential suite starts PostgreSQL 14 through 18 through testcontainers, so
+      # this job needs the Docker daemon the runner already provides. Release, because a
+      # debug build of the 131072-digit cases is an order of magnitude slower.
+      - run: cargo test --release --all-features
+
+  targets:
+    name: target ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Host, to prove the crate itself needs nothing from std.
+          - x86_64-unknown-linux-gnu
+          - wasm32-unknown-unknown
+          - wasm32-wasip1
+          # 32-bit, which exercises every usize-to-u32 length conversion.
+          - riscv32imac-unknown-none-elf
+          # Big-endian, because the format fixes an endianness rather than inheriting one.
+          - powerpc64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo check --lib --no-default-features --target ${{ matrix.target }}
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Must match `rust-version` in Cargo.toml. 1.81 is where `core::error::Error`
+      # stabilized, which `thiserror` 2 needs to work without std.
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --lib --no-default-features
+
+  big-endian:
+    name: big-endian
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+      # A cross-build only proves the code compiles. Running the byte vectors on a real
+      # big-endian target is what proves the encoding does not inherit host endianness.
+      - name: Run the byte vectors on s390x
+        run: |
+          docker run --rm --platform linux/s390x \
+            -v "$PWD":/src:ro -w /work -e CARGO_TERM_COLOR=always \
+            rust:1-slim bash -c '
+              cp -r /src/src /src/tests /src/benches /src/Cargo.toml /src/README.md /work/
+              cargo test --release --test golden --test contract
+            '
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Branch coverage needs nightly.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - name: Measure
+        run: |
+          cargo llvm-cov --release --branch --all-features \
+            --ignore-filename-regex '^(tests|benches|fuzz)/' \
+            --lcov --output-path lcov.info
+          cargo llvm-cov report --release --branch \
+            --ignore-filename-regex '^(tests|benches|fuzz)/' \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-deny
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo deny check
+      - run: cargo audit --deny warnings
+
+  fuzz-smoke:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target\nfuzz -> target"
+      # Enough to catch a target that no longer builds or that breaks immediately. The
+      # real campaigns run in the scheduled workflow.
+      - name: Run each target briefly
+        run: |
+          for target in encode_deterministic equivalence_encoding number_spellings \
+                        object_permutations encode_into_rollback deep_and_wide; do
+            echo "::group::$target"
+            cargo fuzz run "$target" -- -max_total_time=30 -rss_limit_mb=4096
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts

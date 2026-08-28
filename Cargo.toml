@@ -1,0 +1,65 @@
+[package]
+name = "postgres-jsonb-canonical"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "Canonical encoding and equality for PostgreSQL jsonb values."
+repository = "https://github.com/LucaCappelletti94/postgres-jsonb-canonical"
+readme = "README.md"
+keywords = ["postgresql", "jsonb", "canonical", "equality", "no-std"]
+categories = ["database", "encoding", "no-std"]
+# What ships. Stated as an allowlist rather than an exclude list because the working tree
+# collects generated directories (`mutants.out`, coverage output, fuzz corpora) and cargo
+# only consults `.gitignore` once the manifest itself is tracked, which left an 87 MiB
+# package before this was pinned down.
+include = [
+    "/src",
+    "/tests",
+    "/benches",
+    "/README.md",
+    "/LICENSE",
+    "/clippy.toml",
+]
+
+[dependencies]
+serde_json = { version = "1", default-features = false, features = [
+    "alloc",
+    "arbitrary_precision",
+] }
+thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+bigdecimal = { version = "0.4", default-features = false }
+criterion = { version = "0.7", features = ["html_reports"] }
+diesel = { version = "2", features = ["postgres", "serde_json"] }
+dhat = "0.3"
+proptest = "1"
+testcontainers = { version = "0.27", features = ["blocking"] }
+testcontainers-modules = { version = "0.15", features = ["postgres", "blocking"] }
+
+[features]
+default = []
+
+[[bench]]
+name = "canonical"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+# `pub(crate)` inside a private module reaches exactly as far as `pub` would, but it says
+# what it means. This nursery lint would have us drop that signal.
+redundant_pub_crate = "allow"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
