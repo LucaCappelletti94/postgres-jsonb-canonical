@@ -22,9 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@cargo-mutants
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
       - uses: Swatinem/rust-cache@v2
       # The differential suite is excluded: a PostgreSQL round trip per mutant would take
       # days, and the mutations all live in the canonicalization code that the fast suites
@@ -34,7 +36,7 @@ jobs:
           cargo mutants --no-shuffle --test-tool cargo -- \
             --release --lib --test golden --test contract \
             --test properties --test allocations
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutants
@@ -55,22 +57,24 @@ jobs:
           - encode_into_rollback
           - deep_and_wide
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target\nfuzz -> target"
           key: fuzz-${{ matrix.target }}
       # The corpus carries over between runs, so each night starts from the coverage the
       # previous nights reached instead of from nothing.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: corpus-${{ matrix.target }}-${{ github.run_id }}
           restore-keys: corpus-${{ matrix.target }}-
       - run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=1800 -rss_limit_mb=4096
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-artifacts-${{ matrix.target }}
@@ -81,13 +85,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Archived, never gated on. A shared runner is far too noisy to fail a build over,
       # and the real baseline lives on the project workstation.
       - run: cargo bench --bench canonical -- --warm-up-time 1 --measurement-time 3
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: criterion
           path: target/criterion
