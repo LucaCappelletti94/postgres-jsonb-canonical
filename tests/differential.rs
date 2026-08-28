@@ -8,6 +8,9 @@
 //!
 //! Each family asks the server once for the whole corpus rather than once per case.
 
+// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
+// job does not have to build them. See the comment in Cargo.toml.
+#![cfg(target_endian = "little")]
 // `#[derive(QueryableByName)]` expands to `Self { spelling: spelling, .. }`. Clippy blames
 // the field spans rather than the macro, and an allow on the struct does not reach the
 // expansion, so the exemption has to sit here.

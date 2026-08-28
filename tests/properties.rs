@@ -4,6 +4,10 @@
 //! than filtering, so no case is silently discarded. `bigdecimal` serves as an independent
 //! oracle for number normalization.
 
+// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
+// job does not have to build them. See the comment in Cargo.toml.
+#![cfg(target_endian = "little")]
+
 use core::str::FromStr;
 
 use bigdecimal::BigDecimal;

@@ -29,7 +29,18 @@ serde_json = { version = "1", default-features = false, features = [
 ] }
 thiserror = { version = "2", default-features = false }
 
-[dev-dependencies]
+# Every dev-dependency is gated on little-endian, and nothing here is a typo.
+#
+# The big-endian job exists to prove one thing: that the encoding fixes its byte order
+# rather than inheriting the host's. Proving it needs `tests/golden.rs` and
+# `tests/contract.rs`, which import only this crate and `serde_json`. Cargo builds every
+# dev-dependency for any test selection, so without this gate an emulated s390x run spent
+# 65 minutes compiling a benchmark harness, a database client and a container stack in
+# order to run 0.14 seconds of assertions.
+#
+# The suites that do need this tooling carry the matching `#![cfg(target_endian =
+# "little")]`, so they simply do not exist on a big-endian target.
+[target.'cfg(target_endian = "little")'.dev-dependencies]
 bigdecimal = { version = "0.4", default-features = false }
 criterion = { version = "0.7", features = ["html_reports"] }
 diesel = { version = "2", features = ["postgres", "serde_json"] }

@@ -2,6 +2,10 @@
 //!
 //! One test, because only one `dhat` profiler can be live at a time.
 
+// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
+// job does not have to build them. See the comment in Cargo.toml.
+#![cfg(target_endian = "little")]
+
 use postgres_jsonb_canonical::{encode_into, equivalent, Pg18};
 use serde_json::{Map, Value};
 
