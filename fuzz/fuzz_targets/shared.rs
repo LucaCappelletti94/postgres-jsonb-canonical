@@ -6,8 +6,58 @@
 // Every target includes this whole module and uses a different part of it.
 #![allow(dead_code)]
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Result, Unstructured};
 use serde_json::{Map, Number, Value};
+
+/// Exponents worth landing on, being the three ceilings PostgreSQL enforces and their
+/// mirrors. The generator aims at these deliberately, because a uniformly random exponent
+/// essentially never lands within a few steps of a boundary.
+const INTERESTING: [i32; 9] = [
+    0,
+    // Rule 1, the written-exponent ceiling. Reachable only with a zero mantissa, since a
+    // non-zero one trips rule 3 long before.
+    1_073_741_823,
+    -1_073_741_823,
+    // Rule 2, the display-scale ceiling, which bites on negative exponents.
+    -16_383,
+    16_383,
+    // Rule 3, the integer-digit ceiling. With one significant digit, `1e131071` sits
+    // exactly on it and `1e131072` is one past.
+    131_071,
+    131_072,
+    -131_071,
+    -131_072,
+];
+
+/// A decimal exponent, drawn so that boundaries are reached often and in-range values
+/// still dominate.
+///
+/// The distribution is hand-written rather than derived. A derived enum would split
+/// evenly, which would put most numbers out of range and starve every target that builds
+/// a whole document, since one refused number refuses the document.
+#[derive(Debug, Clone, Copy)]
+pub struct Exponent(pub i32);
+
+impl<'a> Arbitrary<'a> for Exponent {
+    fn arbitrary(u: &mut Unstructured<'a>) -> Result<Self> {
+        Ok(Self(match u8::arbitrary(u)? {
+            // Everyday magnitudes, always within every bound.
+            0..=199 => i32::from(i8::arbitrary(u)?),
+            // Within a few steps of a ceiling, which is where the arithmetic is most
+            // likely to be wrong.
+            200..=239 => {
+                let which = usize::from(u8::arbitrary(u)?) % INTERESTING.len();
+                INTERESTING[which].saturating_add(i32::from(i8::arbitrary(u)? % 3))
+            }
+            // Anywhere at all, including far outside anything PostgreSQL would take.
+            _ => i32::arbitrary(u)?,
+        }))
+    }
+
+    fn size_hint(depth: usize) -> (usize, Option<usize>) {
+        arbitrary::size_hint::and(<u8 as Arbitrary>::size_hint(depth), (1, Some(4)))
+    }
+}
 
 /// A number the crate is expected to accept, built from parts rather than filtered.
 #[derive(Arbitrary, Debug, Clone)]
@@ -17,7 +67,7 @@ pub struct Spelling {
     pub digits: Vec<u8>,
     /// How many of those digits fall after the decimal point.
     pub fraction: u8,
-    pub exponent: i16,
+    pub exponent: Exponent,
     pub uppercase_marker: bool,
     pub explicit_plus: bool,
 }
@@ -48,13 +98,13 @@ impl Spelling {
             format!("{integer}.{fraction}")
         };
         let marker = if self.uppercase_marker { 'E' } else { 'e' };
-        let sign = if self.exponent >= 0 && self.explicit_plus {
+        let sign = if self.exponent.0 >= 0 && self.explicit_plus {
             "+"
         } else {
             ""
         };
         let lead = if self.negative { "-" } else { "" };
-        format!("{lead}{mantissa}{marker}{sign}{}", self.exponent)
+        format!("{lead}{mantissa}{marker}{sign}{}", self.exponent.0)
     }
 
     /// The same value written differently: pad the fraction, or move the point right and
