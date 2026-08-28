@@ -46,6 +46,10 @@ criterion = { version = "0.7", features = ["html_reports"] }
 diesel = { version = "2", features = ["postgres", "serde_json"] }
 dhat = "0.3"
 proptest = "1"
+# Only so `tests/legacy_append_json.rs` can reproduce subql's encoder exactly rather than
+# approximating it. Versions match subql's own manifest.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["alloc"] }
 testcontainers = { version = "0.27", features = ["blocking"] }
 testcontainers-modules = { version = "0.15", features = ["postgres", "blocking"] }
 
