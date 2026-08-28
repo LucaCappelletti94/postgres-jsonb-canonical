@@ -172,12 +172,16 @@ jobs:
           workspaces: ". -> target\nfuzz -> target"
       # Enough to catch a target that no longer builds or that breaks immediately. The
       # real campaigns run in the scheduled workflow.
+      # `--target` is pinned because `taiki-e/install-action` ships a musl-built
+      # `cargo-fuzz`, which then defaults its own builds to musl, where AddressSanitizer
+      # cannot link against a static libc.
       - name: Run each target briefly
         run: |
           for target in encode_deterministic equivalence_encoding number_spellings \
                         object_permutations encode_into_rollback deep_and_wide; do
             echo "::group::$target"
-            cargo fuzz run "$target" -- -max_total_time=30 -rss_limit_mb=4096
+            cargo fuzz run "$target" --target x86_64-unknown-linux-gnu \
+              -- -max_total_time=30 -rss_limit_mb=4096
             echo "::endgroup::"
           done
       - uses: actions/upload-artifact@v7
