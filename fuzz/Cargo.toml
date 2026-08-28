@@ -55,4 +55,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "postgres_oracle"
+path = "fuzz_targets/postgres_oracle.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

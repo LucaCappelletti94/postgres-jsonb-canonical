@@ -30,6 +30,19 @@ use serde_json::Value;
 use testcontainers::{core::IntoContainerPort, runners::SyncRunner, ImageExt};
 use testcontainers_modules::postgres::Postgres;
 
+mod common;
+
+diesel::table! {
+    /// The oracle corpus, kept in its own table so recording does not disturb the
+    /// equality corpus above.
+    oracle_cases (id) {
+        /// Index into `common::corpus()`.
+        id -> Integer,
+        /// The spelling as PostgreSQL parsed it.
+        body -> Jsonb,
+    }
+}
+
 diesel::table! {
     /// Corpus rows the server partitions for us.
     jsonb_cases (id) {
@@ -44,6 +57,7 @@ diesel::table! {
 /// connection. Migration-style DDL.
 const INIT_SQL: &str = "
 CREATE TABLE jsonb_cases (id INTEGER PRIMARY KEY, body JSONB NOT NULL);
+CREATE TABLE oracle_cases (id INTEGER PRIMARY KEY, body JSONB NOT NULL);
 
 -- The DSL has no way to attempt a cast and recover from the error, which is exactly what
 -- an acceptance probe is.
@@ -264,6 +278,7 @@ fn run_major<V: PgVersion>(major: &str) -> Result<(), HarnessError> {
     check_pairwise_equality::<V>(connection, major, &corpus)?;
     check_grouping::<V>(connection, major, &corpus)?;
     check_duplicate_keys::<V>(connection, major)?;
+    verify_oracle(connection, major)?;
 
     drop(container);
     Ok(())
@@ -439,6 +454,123 @@ fn load_corpus(connection: &mut PgConnection) -> Result<BTreeMap<i32, &'static s
         .collect())
 }
 
+/// Verifies the committed oracle against this live server.
+///
+/// Every major checks its own acceptance column, and the newest additionally checks the
+/// equivalence classes, since it is the only one that accepts every spelling in the file.
+/// A recording that has gone stale therefore fails the build rather than quietly lying to
+/// the fuzzer that replays it.
+fn verify_oracle(connection: &mut PgConnection, major: &str) -> Result<(), HarnessError> {
+    if std::env::var_os("UPDATE_ORACLE").is_some() {
+        // The refreshing test owns the file in this mode and needs all five servers, so
+        // verifying a half-written file here would be noise.
+        return Ok(());
+    }
+
+    let corpus = common::corpus();
+    let accepted = oracle_acceptance(connection, &corpus)?;
+    let recorded = common::parse(
+        &std::fs::read_to_string(common::oracle_path()).expect("the oracle file exists"),
+    );
+
+    assert_eq!(
+        recorded.len(),
+        corpus.len(),
+        "pg {major}: the oracle has {} rows for a corpus of {}; regenerate it",
+        recorded.len(),
+        corpus.len()
+    );
+
+    for row in &recorded {
+        let live = *accepted
+            .get(&row.spelling)
+            .expect("every spelling was asked about");
+        assert_eq!(
+            row.accepted_by_major(major),
+            live,
+            "pg {major}: the oracle says `{}` acceptance is {}, the server says {live}",
+            row.spelling,
+            row.accepted_by_major(major)
+        );
+    }
+
+    if major == *common::MAJORS.last().expect("the major list is not empty") {
+        let classes = oracle_classes(connection, &corpus, &accepted)?;
+        for row in &recorded {
+            assert_eq!(
+                row.group,
+                classes.get(&row.spelling).copied(),
+                "pg {major}: the recorded class of `{}` no longer matches the server",
+                row.spelling
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Asks the server, in one round trip, which spellings it accepts.
+fn oracle_acceptance(
+    connection: &mut PgConnection,
+    corpus: &[String],
+) -> Result<BTreeMap<String, bool>, HarnessError> {
+    let answers: Vec<Acceptance> = diesel::sql_query(
+        "SELECT spelling, jsonb_accepts(spelling) AS accepted \
+         FROM unnest($1::text[]) AS spelling",
+    )
+    .bind::<Array<Text>, _>(corpus)
+    .load(connection)?;
+    Ok(answers
+        .into_iter()
+        .map(|row| (row.spelling, row.accepted))
+        .collect())
+}
+
+/// Asks the server to partition the accepted spellings under `jsonb =`.
+///
+/// The representative of each class comes from a self-join on equality, so the grouping is
+/// entirely the server's and none of it is ours.
+fn oracle_classes(
+    connection: &mut PgConnection,
+    corpus: &[String],
+    accepted: &BTreeMap<String, bool>,
+) -> Result<BTreeMap<String, u32>, HarnessError> {
+    diesel::delete(oracle_cases::table).execute(connection)?;
+
+    let mut index_of = BTreeMap::new();
+    let mut rows = Vec::new();
+    for spelling in corpus.iter().filter(|spelling| accepted[*spelling]) {
+        let id = i32::try_from(index_of.len()).expect("the corpus is small");
+        index_of.insert(id, spelling.clone());
+        rows.push((
+            oracle_cases::id.eq(id),
+            oracle_cases::body.eq(parse(spelling)),
+        ));
+    }
+    diesel::insert_into(oracle_cases::table)
+        .values(rows)
+        .execute(connection)?;
+
+    let (left, right) = diesel::alias!(oracle_cases as oracle_left, oracle_cases as oracle_right);
+    let representatives: Vec<(i32, i32)> = left
+        .inner_join(
+            right.on(left
+                .field(oracle_cases::body)
+                .eq(right.field(oracle_cases::body))),
+        )
+        .group_by(left.field(oracle_cases::id))
+        .select((
+            left.field(oracle_cases::id),
+            diesel::dsl::min(right.field(oracle_cases::id)).assume_not_null(),
+        ))
+        .load(connection)?;
+
+    let by_spelling: BTreeMap<String, i32> = representatives
+        .into_iter()
+        .map(|(id, representative)| (index_of[&id].clone(), representative))
+        .collect();
+    Ok(common::dense_classes(&by_spelling))
+}
+
 /// Shortens a spelling for an assertion message, since some are 131072 digits long.
 fn elide(spelling: &str) -> String {
     if spelling.len() <= 40 {
@@ -450,6 +582,67 @@ fn elide(spelling: &str) -> String {
         &spelling[spelling.len() - 8..],
         spelling.len()
     )
+}
+
+/// Rebuilds `oracle/postgres-jsonb.tsv` from every supported major.
+///
+/// A no-op unless `UPDATE_ORACLE` is set, so an ordinary run neither starts these
+/// containers nor touches the file. Refreshing needs all five servers, because the
+/// acceptance column is per major while only the newest can classify every spelling, so it
+/// cannot ride along inside the per-major tests the way verification does.
+#[test]
+fn refresh_the_oracle_from_every_major() {
+    if std::env::var_os("UPDATE_ORACLE").is_none() {
+        return;
+    }
+
+    let corpus = common::corpus();
+    let mut accepted_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut classes = BTreeMap::new();
+
+    for major in common::MAJORS {
+        let (container, url) = {
+            let _serialized = startup_lock();
+            let container = Postgres::default()
+                .with_init_sql(INIT_SQL.as_bytes().to_vec())
+                .with_tag(major)
+                .start()
+                .expect("the server starts");
+            let url = format!(
+                "postgres://postgres:postgres@{}:{}/postgres",
+                container.get_host().expect("the host is known"),
+                container
+                    .get_host_port_ipv4(5432.tcp())
+                    .expect("the port is mapped")
+            );
+            (container, url)
+        };
+        let connection = &mut PgConnection::establish(&url).expect("the server accepts us");
+
+        let accepted = oracle_acceptance(connection, &corpus).expect("the server answers");
+        for (spelling, ok) in &accepted {
+            let entry = accepted_by.entry(spelling.clone()).or_default();
+            if *ok {
+                entry.push((*major).to_owned());
+            }
+        }
+
+        if major == *common::MAJORS.last().expect("the major list is not empty") {
+            classes = oracle_classes(connection, &corpus, &accepted).expect("the server groups");
+        }
+        drop(container);
+    }
+
+    let rows: Vec<common::Recorded> = corpus
+        .iter()
+        .map(|spelling| common::Recorded {
+            spelling: spelling.clone(),
+            accepted_by: accepted_by.get(spelling).cloned().unwrap_or_default(),
+            group: classes.get(spelling).copied(),
+        })
+        .collect();
+    std::fs::write(common::oracle_path(), common::render(&rows))
+        .expect("the oracle file is writable");
 }
 
 macro_rules! major_test {

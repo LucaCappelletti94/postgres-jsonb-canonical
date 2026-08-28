@@ -110,39 +110,48 @@ impl Spelling {
     /// The same value written differently: pad the fraction, or move the point right and
     /// drop the exponent to match.
     pub fn respellings(&self) -> Vec<String> {
-        let rendered = self.render();
-        let Some((mantissa, exponent)) = rendered.split_once(['e', 'E']) else {
-            return Vec::new();
-        };
-        let Ok(exponent) = exponent.parse::<i64>() else {
-            return Vec::new();
-        };
-        let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-        let sign = if integer.starts_with('-') { "-" } else { "" };
-        let integer = integer.strip_prefix('-').unwrap_or(integer);
-
-        let mut variants = vec![
-            format!("{sign}{integer}.{fraction}0e{exponent}"),
-            format!("{sign}{integer}.{fraction}000e{exponent}"),
-        ];
-        let all = format!("{integer}{fraction}");
-        for shift in 1..=fraction.len() {
-            let at = integer.len() + shift;
-            let head = all[..at].trim_start_matches('0');
-            let head = if head.is_empty() { "0" } else { head };
-            let tail = &all[at..];
-            let mantissa = if tail.is_empty() {
-                head.to_owned()
-            } else {
-                format!("{head}.{tail}")
-            };
-            let Ok(shift) = i64::try_from(shift) else {
-                continue;
-            };
-            variants.push(format!("{sign}{mantissa}e{}", exponent - shift));
-        }
-        variants
+        respellings_of(&self.render())
     }
+}
+
+/// Every way this harness knows to rewrite a decimal spelling without changing its value.
+///
+/// Free-standing because the oracle target applies it to spellings that came from a real
+/// server rather than from the generator, which is what lets a verified answer anchor a
+/// mutation the server never saw.
+pub fn respellings_of(rendered: &str) -> Vec<String> {
+    let (mantissa, exponent) = match rendered.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => match exponent.parse::<i64>() {
+            Ok(exponent) => (mantissa, exponent),
+            Err(_) => return Vec::new(),
+        },
+        None => (rendered, 0),
+    };
+    let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let sign = if integer.starts_with('-') { "-" } else { "" };
+    let integer = integer.strip_prefix('-').unwrap_or(integer);
+
+    let mut variants = vec![
+        format!("{sign}{integer}.{fraction}0e{exponent}"),
+        format!("{sign}{integer}.{fraction}000e{exponent}"),
+    ];
+    let all = format!("{integer}{fraction}");
+    for shift in 1..=fraction.len() {
+        let at = integer.len() + shift;
+        let head = all[..at].trim_start_matches('0');
+        let head = if head.is_empty() { "0" } else { head };
+        let tail = &all[at..];
+        let mantissa = if tail.is_empty() {
+            head.to_owned()
+        } else {
+            format!("{head}.{tail}")
+        };
+        let Ok(shift) = i64::try_from(shift) else {
+            continue;
+        };
+        variants.push(format!("{sign}{mantissa}e{}", exponent - shift));
+    }
+    variants
 }
 
 /// A JSON value the crate is expected to handle.
