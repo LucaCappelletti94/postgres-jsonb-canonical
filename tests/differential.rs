@@ -1,19 +1,13 @@
-//! Differential tests against real PostgreSQL servers.
+//! Differential tests against real PostgreSQL servers, the only ones that can falsify the
+//! crate.
 //!
-//! PostgreSQL is the specification, so these are the tests that can actually falsify the
-//! crate. Every supported major runs the same families against a server of that major,
-//! using the matching [`PgVersion`] marker: which number spellings the server accepts, how
-//! `jsonb =` partitions a corpus, how `GROUP BY` partitions it, and how duplicate keys
-//! collapse.
-//!
-//! Each family asks the server once for the whole corpus rather than once per case.
+//! Every major runs the same families under its own [`PgVersion`] marker, asking the
+//! server once per family rather than once per case.
 
-// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
-// job does not have to build them. See the comment in Cargo.toml.
+// Dev-dependencies are gated on little-endian; see Cargo.toml.
 #![cfg(target_endian = "little")]
-// `#[derive(QueryableByName)]` expands to `Self { spelling: spelling, .. }`. Clippy blames
-// the field spans rather than the macro, and an allow on the struct does not reach the
-// expansion, so the exemption has to sit here.
+// `#[derive(QueryableByName)]` expands to `Self { spelling: spelling, .. }` and clippy
+// blames the field spans, which an allow on the struct does not reach.
 #![allow(clippy::redundant_field_names)]
 
 use std::{
@@ -33,8 +27,7 @@ use testcontainers_modules::postgres::Postgres;
 mod common;
 
 diesel::table! {
-    /// The oracle corpus, kept in its own table so recording does not disturb the
-    /// equality corpus above.
+    /// The oracle corpus, kept apart from the equality corpus above.
     oracle_cases (id) {
         /// Index into `common::corpus()`.
         id -> Integer,
@@ -53,14 +46,12 @@ diesel::table! {
     }
 }
 
-/// Table and the one helper the query DSL cannot express, installed before the first
-/// connection. Migration-style DDL.
+/// Migration-style DDL, plus the one helper the query DSL cannot express.
 const INIT_SQL: &str = "
 CREATE TABLE jsonb_cases (id INTEGER PRIMARY KEY, body JSONB NOT NULL);
 CREATE TABLE oracle_cases (id INTEGER PRIMARY KEY, body JSONB NOT NULL);
 
--- The DSL has no way to attempt a cast and recover from the error, which is exactly what
--- an acceptance probe is.
+-- The DSL cannot attempt a cast and recover, which is what an acceptance probe is.
 CREATE FUNCTION jsonb_accepts(spelling TEXT) RETURNS BOOLEAN LANGUAGE plpgsql AS $$
 BEGIN
   PERFORM spelling::jsonb;
@@ -97,8 +88,6 @@ struct Normalized {
 }
 
 /// Number spellings whose acceptance the crate claims to reproduce.
-///
-/// Owned strings because the interesting cases are hundreds of thousands of digits long.
 fn acceptance_corpus() -> Vec<String> {
     let mut corpus: Vec<String> = [
         // Ordinary values.
@@ -119,8 +108,7 @@ fn acceptance_corpus() -> Vec<String> {
         "1.5e2",
         "1.55e1",
         "12345678901234567890123456",
-        // Exponent bound, isolated by a zero mantissa. 1073741823 is the one value the
-        // supported majors disagree about, so it is the reason the marker exists.
+        // Exponent bound. 1073741823 is the value the majors disagree about.
         "0e1073741822",
         "0e1073741823",
         "0e1073741824",
@@ -151,7 +139,7 @@ fn acceptance_corpus() -> Vec<String> {
     .map(|spelling| (*spelling).to_owned())
     .collect();
 
-    // Long spellings, kept out of the literal list so it stays readable.
+    // Long spellings, kept out of the literal list.
     corpus.push("9".repeat(131_072));
     corpus.push("9".repeat(131_073));
     corpus.push(format!("1.{}", "0".repeat(16_383)));
@@ -163,10 +151,8 @@ fn acceptance_corpus() -> Vec<String> {
     corpus
 }
 
-/// Values whose equality and grouping the crate claims to reproduce.
-///
-/// Every entry must be one every supported major accepts, since they are inserted into a
-/// jsonb column on all of them.
+/// Values whose equality and grouping the crate claims to reproduce; all must be
+/// insertable on every major.
 fn equality_corpus() -> Vec<&'static str> {
     vec![
         // Numbers that must collapse together.
@@ -231,8 +217,7 @@ fn equality_corpus() -> Vec<&'static str> {
     ]
 }
 
-/// Object spellings PostgreSQL parses but `serde_json::Value` cannot hold, so they can only
-/// reach the server as raw text.
+/// Spellings `serde_json::Value` cannot hold, so they reach the server as raw text.
 const DUPLICATE_KEY_SOURCES: [&str; 4] = [
     r#"{"a":1,"a":2}"#,
     r#"{"a":1,"b":2,"a":3}"#,
@@ -244,11 +229,7 @@ fn parse(text: &str) -> Value {
     serde_json::from_str(text).expect("corpus entry is valid JSON")
 }
 
-/// Serializes container creation.
-///
-/// Five servers starting at once overruns the Docker daemon's request deadline. The lock is
-/// held only while a container is being created and becoming ready, so the query phases
-/// still overlap.
+/// Serializes container creation: five at once overruns the Docker request deadline.
 static STARTUP: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn startup_lock() -> MutexGuard<'static, ()> {
@@ -304,8 +285,7 @@ fn check_acceptance<V: PgVersion>(
 ) -> Result<(), HarnessError> {
     let corpus = acceptance_corpus();
 
-    // One round trip for the whole corpus. `unnest` with a recovering cast is beyond the
-    // query DSL, so this is the justified raw statement.
+    // `unnest` with a recovering cast is beyond the query DSL.
     let answers: Vec<Acceptance> = diesel::sql_query(
         "SELECT spelling, jsonb_accepts(spelling) AS accepted \
          FROM unnest($1::text[]) AS spelling",
@@ -326,7 +306,7 @@ fn check_acceptance<V: PgVersion>(
     Ok(())
 }
 
-/// `equivalent` agrees with `jsonb =` on every pair of the corpus.
+/// `equivalent` agrees with `jsonb =` on every pair.
 fn check_pairwise_equality<V: PgVersion>(
     connection: &mut PgConnection,
     major: &str,
@@ -368,10 +348,8 @@ fn check_pairwise_equality<V: PgVersion>(
     Ok(())
 }
 
-/// PostgreSQL's `GROUP BY` partition is the canonical-byte partition.
-///
-/// `GROUP BY` reaches its answer by hashing or sorting rather than by calling `=`, so this
-/// is a genuinely separate check from the pairwise family.
+/// `GROUP BY` partitions as the canonical bytes do, reaching its answer by hashing or
+/// sorting rather than by `=`, so this is separate from the pairwise family.
 fn check_grouping<V: PgVersion>(
     connection: &mut PgConnection,
     major: &str,
@@ -402,16 +380,13 @@ fn check_grouping<V: PgVersion>(
     Ok(())
 }
 
-/// Duplicate keys: PostgreSQL keeps the last value, and so must the crate.
-///
-/// The source text cannot be held by `serde_json::Value`, so it reaches the server as text.
+/// Duplicate keys keep the last value.
 fn check_duplicate_keys<V: PgVersion>(
     connection: &mut PgConnection,
     major: &str,
 ) -> Result<(), HarnessError> {
     for source in DUPLICATE_KEY_SOURCES {
-        // Casting a text literal to jsonb and back is not a table query, so there is no
-        // typed DSL form of it.
+        // Not a table query, so there is no typed DSL form.
         let answer: Normalized = diesel::sql_query("SELECT ($1::text)::jsonb::text AS normalized")
             .bind::<Text, _>(source)
             .get_result(connection)?;
@@ -454,16 +429,13 @@ fn load_corpus(connection: &mut PgConnection) -> Result<BTreeMap<i32, &'static s
         .collect())
 }
 
-/// Verifies the committed oracle against this live server.
+/// Verifies the committed oracle against this live server, so a stale recording fails the
+/// build rather than lying to everything that replays it.
 ///
-/// Every major checks its own acceptance column, and the newest additionally checks the
-/// equivalence classes, since it is the only one that accepts every spelling in the file.
-/// A recording that has gone stale therefore fails the build rather than quietly lying to
-/// the fuzzer that replays it.
+/// Only the newest major checks classes, being the only one that accepts every spelling.
 fn verify_oracle(connection: &mut PgConnection, major: &str) -> Result<(), HarnessError> {
     if std::env::var_os("UPDATE_ORACLE").is_some() {
-        // The refreshing test owns the file in this mode and needs all five servers, so
-        // verifying a half-written file here would be noise.
+        // The refreshing test owns the file in this mode.
         return Ok(());
     }
 
@@ -525,10 +497,8 @@ fn oracle_acceptance(
         .collect())
 }
 
-/// Asks the server to partition the accepted spellings under `jsonb =`.
-///
-/// The representative of each class comes from a self-join on equality, so the grouping is
-/// entirely the server's and none of it is ours.
+/// Partitions the accepted spellings under `jsonb =` via a self-join, so the grouping is
+/// entirely the server's.
 fn oracle_classes(
     connection: &mut PgConnection,
     corpus: &[String],
@@ -571,7 +541,7 @@ fn oracle_classes(
     Ok(common::dense_classes(&by_spelling))
 }
 
-/// Shortens a spelling for an assertion message, since some are 131072 digits long.
+/// Shortens a spelling for an assertion message.
 fn elide(spelling: &str) -> String {
     if spelling.len() <= 40 {
         return spelling.to_owned();
@@ -584,12 +554,10 @@ fn elide(spelling: &str) -> String {
     )
 }
 
-/// Rebuilds `oracle/postgres-jsonb.tsv` from every supported major.
+/// Rebuilds `oracle/postgres-jsonb.tsv` from every major, unless `UPDATE_ORACLE` is unset.
 ///
-/// A no-op unless `UPDATE_ORACLE` is set, so an ordinary run neither starts these
-/// containers nor touches the file. Refreshing needs all five servers, because the
-/// acceptance column is per major while only the newest can classify every spelling, so it
-/// cannot ride along inside the per-major tests the way verification does.
+/// Needs all five at once, the acceptance column being per major, so it cannot ride along
+/// inside the per-major tests the way verification does.
 #[test]
 fn refresh_the_oracle_from_every_major() {
     if std::env::var_os("UPDATE_ORACLE").is_none() {

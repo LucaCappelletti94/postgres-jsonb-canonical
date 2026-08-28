@@ -1,11 +1,8 @@
-//! Property tests over generated values.
+//! Property tests over generated values, in range by construction rather than filtering.
 //!
-//! Generators produce spellings inside PostgreSQL's accepted domain by construction rather
-//! than filtering, so no case is silently discarded. `bigdecimal` serves as an independent
-//! oracle for number normalization.
+//! `bigdecimal` is the independent oracle for number normalization.
 
-// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
-// job does not have to build them. See the comment in Cargo.toml.
+// Dev-dependencies are gated on little-endian; see Cargo.toml.
 #![cfg(target_endian = "little")]
 
 use core::str::FromStr;
@@ -15,10 +12,8 @@ use postgres_jsonb_canonical::{encode, encode_into, equivalent, CanonicalError, 
 use proptest::prelude::*;
 use serde_json::{Map, Value};
 
-/// A number spelling PostgreSQL accepts, together with spellings of the same value.
-///
-/// Exponents stay small so the display scale and integer digit bounds cannot be reached by
-/// accident. `tests/contract.rs` covers the bounds themselves.
+/// A number spelling PostgreSQL accepts; exponents stay small so the bounds, which
+/// `tests/contract.rs` covers, are not reached by accident.
 fn in_range_number() -> impl Strategy<Value = String> {
     (any::<bool>(), "[0-9]{1,30}", 0usize..8, -20i32..20).prop_map(
         |(negative, digits, fraction, exponent)| {
@@ -50,11 +45,8 @@ fn trim_leading_zeros(mantissa: &str) -> String {
     )
 }
 
-/// Every spelling of the same value this generator knows how to write.
-///
-/// Three transformations, each value-preserving: pad the fraction with zeros, move the
-/// decimal point right while lowering the exponent by the same amount, and change the case
-/// of the exponent marker.
+/// Every spelling of the same value: pad the fraction, move the point right against the
+/// exponent, change the marker's case.
 fn respelled(spelling: &str) -> Vec<String> {
     let (mantissa, exponent) =
         spelling
@@ -76,8 +68,7 @@ fn respelled(spelling: &str) -> Vec<String> {
         variants.push(format!("{sign}{integer}.{fraction}{padding}e{exponent}"));
     }
 
-    // Moving the point right by `shift` digits multiplies by ten that many times, so the
-    // exponent drops by the same amount.
+    // Moving the point right by `shift` drops the exponent by the same amount.
     let digits = format!("{integer}{fraction}");
     for shift in 0..=fraction.len() {
         let at = integer.len() + shift;
@@ -201,8 +192,7 @@ proptest! {
 
     #[test]
     fn canonicalizing_is_idempotent(spelling in in_range_number()) {
-        // The digits and exponent the encoder emits are themselves a valid spelling of the
-        // same value, and re-encoding that spelling reproduces the bytes.
+        // What the encoder emits is itself a spelling of the same value.
         let value = parse(&spelling);
         let bytes = encode::<Pg18>(&value)?;
         let round_trip = parse(&canonical_spelling(&bytes));

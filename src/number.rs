@@ -1,16 +1,11 @@
 //! Canonical decimal form of a JSON number, derived from its text.
 //!
-//! PostgreSQL compares jsonb numbers with `numeric_eq`, which ignores how a value was
-//! spelled. Every decimal has exactly one representation as a sign, a run of significant
-//! digits carrying neither a leading nor a trailing zero, and the power of ten of the last
-//! of those digits, so that triple is the canonical form and a single pass over the text
-//! produces it.
+//! Every decimal has exactly one form as a sign, significant digits without leading or
+//! trailing zeros, and the power of ten of the last digit.
 
 use crate::CanonicalError;
 
-// The exponent ceiling is not a constant here: it moved from 1073741822 to 1073741823
-// between PostgreSQL 15 and 16, so the caller supplies its server's value through
-// `PgVersion::MAX_EXPONENT`. The other two bounds are identical on every supported major.
+// The exponent ceiling moved between PostgreSQL 15 and 16, so the caller supplies it.
 
 /// Largest display scale, PostgreSQL's `NUMERIC_DSCALE_MASK`.
 const MAX_SCALE: i64 = 16_383;
@@ -18,14 +13,10 @@ const MAX_SCALE: i64 = 16_383;
 /// Largest integer digit count, `(NUMERIC_WEIGHT_MAX + 1) * 4`.
 const MAX_INTEGER_DIGITS: i64 = 131_072;
 
-/// Most significant digits a value PostgreSQL accepts can carry.
-///
-/// A spelling may hold 131072 integer digits and 16383 fraction digits at the same time,
-/// so this is their sum.
+/// Most significant digits PostgreSQL accepts: 131072 integer plus 16383 fraction.
 pub const MAX_DIGITS: usize = 147_455;
 
-/// Sign of a canonical decimal. Zero is its own case because PostgreSQL drops the sign of
-/// negative zero on input.
+/// Sign of a canonical decimal; zero is its own case, since PostgreSQL drops its sign.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sign {
     Zero,
@@ -46,9 +37,7 @@ impl Sign {
 
 /// A JSON number in canonical form.
 ///
-/// The significant digits are held as two borrowed slices rather than one owned string,
-/// because they straddle the decimal point in the source text. `head` comes from the
-/// integer part and `tail` from the fraction part, and either may be empty.
+/// Digits are two borrowed slices because they straddle the decimal point in the source.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Decimal<'a> {
     pub(crate) sign: Sign,
@@ -59,7 +48,7 @@ pub(crate) struct Decimal<'a> {
 }
 
 impl<'a> Decimal<'a> {
-    /// The single canonical zero, which also absorbs negative zero.
+    /// The single canonical zero, absorbing negative zero.
     const ZERO: Self = Self {
         sign: Sign::Zero,
         head: &[],
@@ -84,8 +73,7 @@ impl<'a> Decimal<'a> {
 }
 
 impl PartialEq for Decimal<'_> {
-    /// Equal when the canonical triples match. The slice split is an artefact of the
-    /// source text and carries no meaning, so `12.3` equals `123e-1`.
+    /// The slice split is an artefact of the source, so `12.3` equals `123e-1`.
     fn eq(&self, other: &Self) -> bool {
         self.sign == other.sign
             && self.exponent == other.exponent
@@ -96,14 +84,9 @@ impl PartialEq for Decimal<'_> {
 
 impl Eq for Decimal<'_> {}
 
-/// Parses a JSON number spelling into canonical form, refusing anything the named server's
-/// `numeric` input would refuse.
+/// Parses a JSON number into canonical form, refusing what the named server would refuse.
 ///
-/// `max_exponent` is that server's ceiling on a written exponent, which is the one bound
-/// that differs between majors.
-///
-/// A spelling that is not a JSON number is also refused. `serde_json`'s public API cannot
-/// produce one, but the crate answers rather than panics if it ever sees one.
+/// Total: a spelling that is not a JSON number is refused rather than panicked on.
 pub(crate) fn parse(spelling: &str, max_exponent: i64) -> Result<Decimal<'_>, CanonicalError> {
     let bytes = spelling.as_bytes();
     let mut at = 0;
@@ -141,7 +124,7 @@ pub(crate) fn parse(spelling: &str, max_exponent: i64) -> Result<Decimal<'_>, Ca
         return Err(CanonicalError::NumberOutOfRange);
     }
 
-    // Rule 2: display scale. Applies whatever the mantissa is, so it precedes the split.
+    // Rule 2: display scale, which applies whatever the mantissa is.
     let fraction_len =
         i64::try_from(fraction.len()).map_err(|_| CanonicalError::NumberOutOfRange)?;
     if fraction_len - exponent > MAX_SCALE {
@@ -158,14 +141,13 @@ pub(crate) fn parse(spelling: &str, max_exponent: i64) -> Result<Decimal<'_>, Ca
     let trailing = i64::try_from(trailing_zeros).map_err(|_| CanonicalError::NumberOutOfRange)?;
     let last_digit_exponent = exponent - fraction_len + trailing;
 
-    // Rule 3: integer digit count, computed from the normalized digits. Using the raw
-    // integer digit count instead would misplace the boundary for a spelling with leading
-    // zeros, such as `0.001e131074`.
+    // Rule 3: integer digits, from the normalized count. The raw count misplaces the
+    // boundary for a spelling with leading zeros, such as `0.001e131074`.
     if significant + last_digit_exponent > MAX_INTEGER_DIGITS {
         return Err(CanonicalError::NumberOutOfRange);
     }
 
-    // Rules 2 and 3 together confine this to -16383..=131071.
+    // Rules 2 and 3 confine this to -16383..=131071.
     let exponent =
         i32::try_from(last_digit_exponent).map_err(|_| CanonicalError::NumberOutOfRange)?;
 
@@ -190,10 +172,7 @@ fn take_digits<'a>(bytes: &'a [u8], at: &mut usize) -> &'a [u8] {
     &bytes[start..*at]
 }
 
-/// Consumes an exponent, refusing one the named server's parser would refuse.
-///
-/// JSON permits leading zeros here, so `1e0000000000000000005` means `1e5` and the digit
-/// run alone does not bound the value.
+/// Consumes an exponent; JSON permits leading zeros, so the digit run does not bound it.
 fn take_exponent(bytes: &[u8], at: &mut usize, max_exponent: i64) -> Result<i64, CanonicalError> {
     let negative = match bytes.get(*at) {
         Some(b'+') => {
@@ -227,10 +206,8 @@ fn take_exponent(bytes: &[u8], at: &mut usize, max_exponent: i64) -> Result<i64,
     Ok(if negative { -magnitude } else { magnitude })
 }
 
-/// Narrows the integer and fraction digits to the significant run.
-///
-/// Returns the two slices covering it and how many trailing zeros were dropped, or `None`
-/// when every digit is a zero and the value is therefore zero.
+/// Narrows to the significant run, returning its slices and the trailing zeros dropped,
+/// or `None` when the value is zero.
 fn split_significant<'a>(
     integer: &'a [u8],
     fraction: &'a [u8],
@@ -263,8 +240,7 @@ fn split_significant<'a>(
         in_fraction
     };
 
-    // The significant run is the window `leading..total - trailing` over the digits of
-    // `integer` followed by those of `fraction`, which may straddle the boundary.
+    // The window `leading..total - trailing` may straddle the two slices.
     let end = total - trailing;
     let head = &integer[leading.min(integer.len())..end.min(integer.len())];
     let tail = &fraction[leading.saturating_sub(integer.len())..end.saturating_sub(integer.len())];
@@ -276,12 +252,10 @@ mod tests {
     use super::{parse, Sign};
     use crate::CanonicalError;
 
-    /// Every supported major accepts at least this much, so it isolates shape from bounds.
+    /// Accepted by every major, so shape is tested apart from bounds.
     const ANY: i64 = 1_073_741_822;
 
-    /// The parser is total. `serde_json`'s public API cannot hand it a malformed spelling,
-    /// so nothing above this module can reach these paths, but the crate must answer rather
-    /// than panic or misread if one ever arrives.
+    /// Unreachable through `serde_json`'s public API, but must answer rather than panic.
     #[test]
     fn a_spelling_that_is_not_a_json_number_is_refused() {
         for spelling in [
@@ -318,8 +292,7 @@ mod tests {
         }
     }
 
-    /// Only `e` and `E` start an exponent. Accepting any byte there would read `1x5` as
-    /// `1e5` instead of refusing it.
+    /// Accepting any byte as the marker would read `1x5` as `1e5`.
     #[test]
     fn only_e_introduces_an_exponent() {
         assert!(parse("1e5", ANY).is_ok());
@@ -333,8 +306,7 @@ mod tests {
         }
     }
 
-    /// The ceiling is the caller's, so the same spelling can be accepted or refused
-    /// depending on which server was named.
+    /// The same spelling is accepted or refused depending on the server named.
     #[test]
     fn the_exponent_ceiling_comes_from_the_caller() {
         assert!(parse("0e1073741822", 1_073_741_822).is_ok());
@@ -343,7 +315,7 @@ mod tests {
         assert!(parse("0e1073741824", 1_073_741_823).is_err());
     }
 
-    /// The canonical triple, checked directly rather than through the encoded bytes.
+    /// The canonical triple, checked directly rather than through the bytes.
     #[test]
     fn normalization_produces_the_expected_triple() {
         let cases: [(&str, Sign, i32, &str); 8] = [
@@ -365,8 +337,7 @@ mod tests {
         }
     }
 
-    /// Two spellings of one value produce equal triples even when the digits are split
-    /// across the decimal point differently.
+    /// One value produces equal triples however its digits straddle the point.
     #[test]
     fn equality_ignores_how_the_digits_are_split() {
         assert_eq!(parse("12.3", ANY).ok(), parse("123e-1", ANY).ok());

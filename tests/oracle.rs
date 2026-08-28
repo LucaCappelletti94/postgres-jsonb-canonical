@@ -1,11 +1,9 @@
 //! Replays the recorded PostgreSQL answers with no server in the loop.
 //!
-//! `tests/differential.rs` proves the recording still matches live servers. This file
-//! proves the crate matches the recording, and it needs no Docker, so it runs on every
-//! push and on targets where a server could never run at all.
+//! `tests/differential.rs` proves the recording still matches live servers; this proves
+//! the crate matches the recording.
 
-// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
-// job does not have to build them. See the comment in Cargo.toml.
+// Dev-dependencies are gated on little-endian; see Cargo.toml.
 #![cfg(target_endian = "little")]
 
 use postgres_jsonb_canonical::{encode, equivalent, Pg14, Pg15, Pg16, Pg17, Pg18};
@@ -38,8 +36,7 @@ fn accepts(major: &str, value: &Value) -> bool {
 
 #[test]
 fn the_oracle_is_worth_replaying() {
-    // Guards the tests below from passing on a corpus that says nothing: they need real
-    // refusals, real classes, and at least one spelling the majors disagree about.
+    // Guards the tests below from passing on a corpus that says nothing.
     let rows = recorded();
     let refused = rows.iter().filter(|row| row.accepted_by.is_empty()).count();
     let classes: std::collections::BTreeSet<_> = rows.iter().filter_map(|row| row.group).collect();
@@ -81,9 +78,7 @@ fn acceptance_matches_every_server() {
 
 #[test]
 fn the_classes_are_exactly_the_canonical_byte_groups() {
-    // The server's partition and the crate's partition have to be the same relation, so
-    // every pair is checked in both directions: same class implies identical bytes, and
-    // different class implies different bytes.
+    // The two partitions must be the same relation, so pairs are checked both ways.
     let rows: Vec<_> = recorded()
         .into_iter()
         .filter(|row| row.group.is_some())

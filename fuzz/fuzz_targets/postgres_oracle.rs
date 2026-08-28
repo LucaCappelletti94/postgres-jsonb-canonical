@@ -1,14 +1,7 @@
-//! Replays real PostgreSQL answers, and mutates around them.
+//! Replays recorded PostgreSQL answers, and mutates around them.
 //!
-//! A live server cannot sit inside a coverage-guided loop, so the servers were asked once
-//! and their answers committed to `oracle/postgres-jsonb.tsv`. The recording is compiled
-//! in here.
-//!
-//! `tests/oracle.rs` already checks the crate against every recorded row, which a fuzzer
-//! would cover in seconds and then add nothing. What this target adds is the part a fixed
-//! test cannot do: it takes a spelling a server verified, rewrites it in a way that cannot
-//! change its value, and asserts the rewrite lands in the same equivalence class. The
-//! server never saw the rewrite, but its verdict on the anchor still binds it.
+//! Beyond what `tests/oracle.rs` already checks: rewrite a server-verified spelling
+//! without changing its value, and hold it to the anchor's class.
 
 #![no_main]
 
@@ -20,11 +13,7 @@ use postgres_jsonb_canonical::{encode, equivalent, Pg14, Pg18};
 use serde_json::Value;
 use shared::respellings_of;
 
-/// The committed recording, parsed once per process.
-///
-/// The parser is a few lines and is duplicated from `tests/common/mod.rs` rather than
-/// shared, because the fuzz targets are a separate workspace and a dependency edge between
-/// them would be worse than these six lines.
+/// The committed recording; parsed here rather than shared, the fuzz crate being separate.
 struct Row {
     spelling: &'static str,
     accepted_by_oldest: bool,
@@ -70,8 +59,7 @@ fuzz_target!(|input: (u16, u16, u8)| {
         return;
     };
 
-    // The recording binds acceptance on both sides of the one boundary the majors differ
-    // about.
+    // Both sides of the one boundary the majors differ about.
     assert_eq!(
         encode::<Pg18>(&left_value).is_ok(),
         left.accepted_by_newest,
@@ -85,8 +73,7 @@ fuzz_target!(|input: (u16, u16, u8)| {
         left.spelling
     );
 
-    // And it binds the relation between any two rows, which is why the class was recorded
-    // rather than the pairwise answers: N rows carry all N-squared verdicts.
+    // Classes rather than pairwise answers: N rows carry all N-squared verdicts.
     if let (Some(left_class), Some(right_class)) = (left.class, right.class) {
         let same = left_class == right_class;
         assert_eq!(
@@ -98,8 +85,7 @@ fuzz_target!(|input: (u16, u16, u8)| {
         );
     }
 
-    // The part a fixed replay cannot reach: rewrite a verified spelling without changing
-    // its value, and hold it to the anchor's class.
+    // The part a fixed replay cannot reach.
     let Ok(anchor) = encode::<Pg18>(&left_value) else {
         return;
     };
@@ -111,8 +97,7 @@ fuzz_target!(|input: (u16, u16, u8)| {
     let Some(rewritten_value) = parse(rewritten) else {
         return;
     };
-    // A rewrite can push the display scale out of range even though the value is the same,
-    // and refusing it is correct.
+    // A rewrite can push the scale out of range; that refusal is correct.
     let Ok(actual) = encode::<Pg18>(&rewritten_value) else {
         return;
     };

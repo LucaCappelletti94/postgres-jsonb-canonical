@@ -1,7 +1,6 @@
 //! The PostgreSQL acceptance and equality contract, stated as examples.
 //!
-//! Every bound and every accepted or refused spelling here was measured against
-//! PostgreSQL 14, 17 and 18. `tests/differential.rs` re-derives them from a live server.
+//! `tests/differential.rs` re-derives every one of them from a live server.
 
 use postgres_jsonb_canonical::{
     encode, encode_into, equivalent, CanonicalError, Pg14, Pg15, Pg16, Pg17, Pg18, MAX_DEPTH,
@@ -143,8 +142,7 @@ fn integer_digit_ceiling_is_131072() {
 
 #[test]
 fn the_integer_ceiling_counts_significant_digits_not_written_ones() {
-    // Leading zeros do not consume the budget. Reading the integer part literally would
-    // have placed this boundary three powers of ten higher.
+    // Leading zeros do not consume the budget; a literal reading misplaces this by three.
     assert_accepted("0.001e131074");
     assert_refused("0.001e131075");
     // Neither do trailing zeros.
@@ -168,9 +166,7 @@ fn exponent_ceiling_is_half_of_i32_max() {
 
 #[test]
 fn the_exponent_ceiling_moved_between_postgresql_15_and_16() {
-    // The one place the supported majors disagree. Only zero written with this exact
-    // exponent is affected: `0e1073741823` is a legal jsonb value from 16 onward and an
-    // error before it.
+    // The one place the majors disagree, and only for zero at this exact exponent.
     let disputed = parse("0e1073741823");
     assert_eq!(
         encode::<Pg14>(&disputed),
@@ -197,8 +193,7 @@ fn the_exponent_ceiling_moved_between_postgresql_15_and_16() {
     assert!(encode::<Pg14>(&above).is_err());
     assert!(encode::<Pg18>(&above).is_err());
 
-    // A non-zero mantissa is refused everywhere at that exponent, for the unrelated reason
-    // that it would need more than 131072 integer digits.
+    // A non-zero mantissa is refused everywhere, needing over 131072 integer digits.
     let nonzero = parse("1e1073741823");
     assert!(encode::<Pg16>(&nonzero).is_err());
     assert!(encode::<Pg18>(&nonzero).is_err());
@@ -206,8 +201,7 @@ fn the_exponent_ceiling_moved_between_postgresql_15_and_16() {
 
 #[test]
 fn the_marker_changes_acceptance_and_nothing_else() {
-    // Whenever two majors both accept a value, they produce the same bytes, so a key
-    // written before a server upgrade stays valid after one.
+    // A key written before a server upgrade stays valid after one.
     for text in [
         "0",
         "1",
@@ -321,10 +315,8 @@ fn nested(depth: usize) -> Value {
     value
 }
 
-/// Builds a value nested `depth` objects deep.
-///
-/// Objects take a different branch from arrays in both the encoder and the validator, so
-/// testing only arrays leaves the object depth check unexercised.
+/// Builds a value nested `depth` objects deep, objects taking a different branch from
+/// arrays in both the encoder and the validator.
 fn nested_objects(depth: usize) -> Value {
     let mut value = Value::Null;
     for _ in 0..depth {
@@ -347,8 +339,7 @@ fn nesting_is_capped_at_max_depth() {
             equivalent::<Pg18>(&build(MAX_DEPTH + 1), &Value::Null),
             Err(CanonicalError::NestingLimit)
         );
-        // The limit counts containers whichever kind they are, so the same depth of the
-        // other kind behaves identically.
+        // The limit counts containers of either kind alike.
         assert!(equivalent::<Pg18>(&build(MAX_DEPTH), &build(MAX_DEPTH)).expect("at the cap"));
     }
 
@@ -465,12 +456,8 @@ fn equivalent_and_encode_accept_the_same_values() {
 
 #[test]
 fn a_value_breaking_two_rules_is_still_refused_by_both() {
-    // The encoder visits object keys sorted by length then bytes, while the comparison
-    // visits them in map order, so the two can meet different violations first. The
-    // reported variant is diagnostic. Refusal is not, and must always agree.
-    //
-    // `b` sorts first for the encoder and second for a byte-ordered map, so the two walks
-    // reach the over-deep branch and the refused number in opposite orders.
+    // The two walk objects in different orders, so they meet different violations first.
+    // The variant is diagnostic; refusal is not, and must agree.
     let mut object = serde_json::Map::new();
     object.insert("aa".to_owned(), parse("1e-16384"));
     object.insert("b".to_owned(), nested(MAX_DEPTH + 1));
@@ -484,7 +471,7 @@ fn a_value_breaking_two_rules_is_still_refused_by_both() {
         "acceptance must agree even when several rules are broken"
     );
 
-    // Same for the mirror arrangement, so the test does not depend on which walk wins.
+    // Mirrored, so the test does not depend on which walk wins.
     let mut mirrored = serde_json::Map::new();
     mirrored.insert("aa".to_owned(), nested(MAX_DEPTH + 1));
     mirrored.insert("b".to_owned(), parse("1e-16384"));

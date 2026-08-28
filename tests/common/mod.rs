@@ -1,24 +1,14 @@
-//! The PostgreSQL oracle corpus: what it contains, and how it is stored.
+//! The PostgreSQL oracle corpus: recorded server answers, replayed without a server.
 //!
-//! A live server is far too slow to sit inside a coverage-guided fuzzing loop, and too
-//! slow to consult per assertion. So the server is asked once, offline, and its answers are
-//! written to a file that everything else replays. `tests/oracle.rs` replays it with no
-//! Docker at all, `tests/differential.rs` re-verifies it against live servers, and
-//! `fuzz/fuzz_targets/postgres_oracle.rs` lets the fuzzer explore the pairs.
-//!
-//! Two things are recorded per spelling: which majors accept it, and which equivalence
-//! class the server put it in. The class is the valuable part, because it makes every one
-//! of the N-squared pairs checkable from N recorded rows.
+//! Per spelling: which majors accept it, and its equivalence class. Storing the class
+//! makes all N-squared pairs checkable from N rows.
 
-// Compiled separately into every test binary that declares `mod common`, and each of them
-// uses a different part: `oracle.rs` replays the file, `differential.rs` records and
-// verifies it. Neither uses all of it.
+// Each test binary that declares `mod common` uses a different part.
 #![allow(dead_code)]
 
 use std::{collections::BTreeMap, fmt::Write as _, path::PathBuf};
 
-/// Majors the corpus records, newest last. The newest is the most permissive, so it is the
-/// one that assigns equivalence classes.
+/// Majors recorded, newest last; the newest is most permissive and assigns the classes.
 pub const MAJORS: [&str; 5] = ["14", "15", "16", "17", "18"];
 
 /// Where the recorded answers live, relative to the crate root.
@@ -42,8 +32,7 @@ impl Recorded {
     }
 }
 
-/// Renders the corpus in the committed format: a comment header, then one row per
-/// spelling, tab separated, in corpus order so a regeneration produces a reviewable diff.
+/// Renders the committed format, in corpus order so a regeneration diffs cleanly.
 pub fn render(rows: &[Recorded]) -> String {
     let mut out = String::new();
     out.push_str("# PostgreSQL oracle for postgres-jsonb-canonical.\n");
@@ -89,15 +78,12 @@ pub fn parse(text: &str) -> Vec<Recorded> {
 
 /// The spellings the servers are asked about.
 ///
-/// Built mechanically rather than listed by hand, and deliberately kept short: the
-/// interesting arithmetic sits at the ceilings, and every ceiling is reachable with a brief
-/// spelling. `1e131072` exceeds the integer-digit ceiling in eight characters. Long digit
-/// runs are covered by `tests/contract.rs` instead, and would make this file unreviewable.
+/// Short by design: every ceiling is reachable briefly, `1e131072` in eight characters.
+/// Long digit runs live in `tests/contract.rs`.
 pub fn corpus() -> Vec<String> {
     let mut spellings = Vec::new();
 
-    // Every ceiling, approached from both sides, on a bare mantissa and on one carrying a
-    // fraction digit, since the fraction shifts the display scale by one.
+    // Every ceiling from both sides, with and without a fraction digit.
     for centre in [
         1_073_741_823_i64, // rule 1, the written exponent
         -1_073_741_823,
@@ -117,8 +103,7 @@ pub fn corpus() -> Vec<String> {
         }
     }
 
-    // Values with several spellings, so the recorded classes have real structure rather
-    // than being one spelling each.
+    // Several spellings per value, so the classes have real structure.
     for (mantissa, exponents) in [
         ("1", [0_i64, 1, 2, -1, -2]),
         ("1.5", [0, 1, 2, -1, -2]),
@@ -145,7 +130,7 @@ pub fn corpus() -> Vec<String> {
         spellings.push((*spelling).to_owned());
     }
 
-    // Precision an f64 cannot hold, so a lossy path would collapse these together.
+    // Precision an f64 would collapse.
     for spelling in [
         "12345678901234567890123456",
         "12345678901234567890123457",
@@ -169,10 +154,8 @@ pub fn corpus() -> Vec<String> {
         spellings.push((*spelling).to_owned());
     }
 
-    // JSON forbids a leading zero on a multi-digit integer part, so the point-shifting
-    // above can emit spellings like `00e0`. PostgreSQL rejects those for the same reason,
-    // but more to the point `serde_json` cannot produce such a `Value`, so they sit
-    // outside the crate's input domain entirely and would only be noise in the file.
+    // The shifting above can emit `00e0`, which `serde_json` cannot produce as a `Value`
+    // and so lies outside the crate's input domain.
     spellings.retain(|spelling| serde_json::from_str::<serde_json::Value>(spelling).is_ok());
 
     spellings.sort_unstable();

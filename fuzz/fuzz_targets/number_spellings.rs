@@ -1,10 +1,4 @@
-//! Rewriting a number without changing its value never changes the bytes, and the crate
-//! accepts exactly the spellings PostgreSQL's three rules say it should.
-//!
-//! The acceptance half matters more than it looks. The rules are the only part of this
-//! crate with real arithmetic in it, and until the exponent generator was widened they
-//! could not be reached by fuzzing at all: two of the three ceilings sat beyond anything
-//! the generator could emit.
+//! Rewriting a number never changes its bytes, and acceptance matches the three rules.
 
 #![no_main]
 
@@ -22,12 +16,10 @@ const MAX_SCALE: i128 = 16_383;
 /// Rule 3, the integer digit count.
 const MAX_INTEGER_DIGITS: i128 = 131_072;
 
-/// Whether PostgreSQL accepts a spelling, worked out from the three documented rules.
+/// Whether PostgreSQL accepts a spelling, from the rules alone.
 ///
-/// Written from the rules rather than from the crate, and deliberately in a different
-/// shape: it scans the rendered text, works in `i128` so no intermediate can overflow, and
-/// shares no code with `src/number.rs`. That is what makes it an oracle rather than an
-/// echo.
+/// Shares no code with `src/number.rs` and works in `i128`, which is what makes it an
+/// oracle rather than an echo.
 fn postgres_accepts(spelling: &str, max_exponent: i128) -> bool {
     let body = spelling.strip_prefix('-').unwrap_or(spelling);
     let (mantissa, exponent) = match body.split_once(['e', 'E']) {
@@ -70,8 +62,7 @@ fuzz_target!(|spelling: Spelling| {
     let rendered = spelling.render();
     let original = number(&rendered);
 
-    // The crate's acceptance must match the rules, on both sides of the one boundary the
-    // supported majors disagree about.
+    // Both sides of the one boundary the majors disagree about.
     let accepted = encode::<Pg18>(&original).is_ok();
     assert_eq!(
         accepted,
@@ -90,8 +81,7 @@ fuzz_target!(|spelling: Spelling| {
 
     for variant in spelling.respellings() {
         let parsed = number(&variant);
-        // A respelling can push the display scale out of range even though the value is
-        // unchanged, and that refusal is correct.
+        // A respelling can push the scale out of range; that refusal is correct.
         let Ok(actual) = encode::<Pg18>(&parsed) else {
             assert!(
                 !postgres_accepts(&variant, MAX_EXPONENT),
@@ -106,7 +96,7 @@ fuzz_target!(|spelling: Spelling| {
         assert!(equivalent::<Pg18>(&original, &parsed).expect("both accepted"));
     }
 
-    // The older majors accept a strict subset, so anything they take, the newer ones take.
+    // The older majors accept a strict subset.
     if let Ok(older) = encode::<Pg14>(&original) {
         assert_eq!(older, expected);
     }

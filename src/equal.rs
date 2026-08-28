@@ -6,9 +6,8 @@ use crate::{number, CanonicalError, MAX_CONTAINER_ELEMENTS, MAX_DEPTH};
 
 /// Reports whether PostgreSQL's `jsonb =` would consider the two values equal.
 ///
-/// Both sides are validated in full before anything is compared. Without that, a mismatch
-/// near the start would let a number PostgreSQL cannot store go unnoticed, and `equivalent`
-/// would then accept a pair that [`crate::encode`] refuses.
+/// Both sides are validated first, or an early mismatch would let a refused number pass
+/// and `equivalent` would accept a pair [`crate::encode`] rejects.
 pub(crate) fn equivalent(
     left: &Value,
     right: &Value,
@@ -19,10 +18,7 @@ pub(crate) fn equivalent(
     compare(left, right, MAX_DEPTH, max_exponent)
 }
 
-/// Checks depth, container widths and number ranges without comparing or normalizing.
-///
-/// This is the cheap half: it counts digits and never performs arithmetic on them, so it
-/// costs far less than the comparison it precedes. It allocates nothing.
+/// Checks depth, widths and number ranges without comparing. Allocates nothing.
 fn validate(value: &Value, depth: usize, max_exponent: i64) -> Result<(), CanonicalError> {
     match value {
         Value::Null | Value::Bool(_) => Ok(()),
@@ -52,9 +48,8 @@ fn validate(value: &Value, depth: usize, max_exponent: i64) -> Result<(), Canoni
 
 /// Compares two validated values, stopping at the first difference.
 ///
-/// The error paths are unreachable once [`validate`] has accepted both sides. They are
-/// propagated rather than asserted away so that no branch can answer wrongly if that
-/// invariant is ever broken.
+/// Error paths are unreachable after [`validate`], and propagated rather than asserted
+/// away so no branch can answer wrongly if that ever breaks.
 fn compare(
     left: &Value,
     right: &Value,
@@ -91,8 +86,7 @@ fn compare(
             let Some(depth) = depth.checked_sub(1) else {
                 return Err(CanonicalError::NestingLimit);
             };
-            // Equal sizes plus every left key found in right means the key sets match, so
-            // neither side needs sorting and nothing is allocated.
+            // Equal sizes plus every left key present means the key sets match, unsorted.
             if left.len() != right.len() {
                 return Ok(false);
             }
@@ -110,7 +104,7 @@ fn compare(
     }
 }
 
-/// Refuses a container or string wider than PostgreSQL's 28-bit length field.
+/// Refuses anything wider than PostgreSQL's 28-bit length field.
 const fn width(value: usize) -> Result<(), CanonicalError> {
     if value > MAX_CONTAINER_ELEMENTS {
         return Err(CanonicalError::ContainerTooLarge);

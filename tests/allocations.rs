@@ -1,9 +1,6 @@
-//! Allocation counts, which Criterion cannot measure.
-//!
-//! One test, because only one `dhat` profiler can be live at a time.
+//! Allocation counts, which Criterion cannot measure. One test: one live profiler.
 
-// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
-// job does not have to build them. See the comment in Cargo.toml.
+// Dev-dependencies are gated on little-endian; see Cargo.toml.
 #![cfg(target_endian = "little")]
 
 use postgres_jsonb_canonical::{encode_into, equivalent, Pg18};
@@ -27,16 +24,14 @@ fn blocks(work: impl FnOnce()) -> u64 {
 fn allocation_counts_are_what_the_design_claims() {
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    // Large enough that the output buffer never grows during a measurement, so every
-    // block counted below comes from the encoder rather than from the caller's buffer.
+    // Large enough never to grow, so every block counted comes from the encoder.
     let mut output = Vec::with_capacity(64 << 20);
     let mut encode = |value: &Value| {
         output.clear();
         encode_into::<Pg18>(value, &mut output).expect("in range");
     };
 
-    // Scalars into a buffer that is already large enough: nothing on the heap. The object
-    // scratch buffer starts empty and `Vec::new` does not allocate.
+    // Nothing on the heap: the object scratch starts empty and `Vec::new` never allocates.
     for text in [
         "null",
         "true",
@@ -73,8 +68,7 @@ fn allocation_counts_are_what_the_design_claims() {
         "scratch growth took {growth} allocations for one 4096-key object"
     );
 
-    // The point of sharing: a hundred sibling objects cost what one costs, because each
-    // truncates the buffer back on the way out and the next reuses the capacity.
+    // The point of sharing: a hundred siblings cost what one costs.
     let siblings = Value::Array(vec![wide.clone(); 100]);
     let many = blocks(|| encode(&siblings));
     assert_eq!(
@@ -82,8 +76,7 @@ fn allocation_counts_are_what_the_design_claims() {
         "100 sibling objects cost {many} against {growth} for one"
     );
 
-    // Nesting is the case that genuinely needs more room, since every level on the path
-    // holds its pairs at once. It still stays within a few doublings.
+    // Nesting needs more room, every level on the path holding its pairs at once.
     let mut nested = wide.clone();
     for _ in 0..4 {
         let mut level = Map::new();

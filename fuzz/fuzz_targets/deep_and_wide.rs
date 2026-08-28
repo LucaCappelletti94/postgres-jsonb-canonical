@@ -10,8 +10,7 @@ use postgres_jsonb_canonical::{encode, equivalent, Pg18};
 use serde_json::Value;
 use shared::Shape;
 
-/// Well inside `MAX_DEPTH`, so the targets spend their budget on documents rather than on
-/// the nesting error.
+/// Well inside `MAX_DEPTH`, so the budget goes on documents, not the nesting error.
 const BUDGET: usize = 24;
 
 fuzz_target!(|input: (u8, Shape)| {
@@ -30,12 +29,8 @@ fuzz_target!(|input: (u8, Shape)| {
         };
     }
 
-    // Whatever the answer, it is an answer: no panic, no overflow, and the two entry points
-    // agree about whether this value is acceptable.
-    //
-    // Only acceptance is asserted. A value can break several rules at once, and the two
-    // functions do not walk objects in the same order, so they may name different reasons
-    // for the same refusal. That is documented on `CanonicalError`.
+    // Acceptance only: a value breaking several rules can get different variants from the
+    // two, since they do not walk objects in the same order.
     let encoded = encode::<Pg18>(&value);
     let compared = equivalent::<Pg18>(&value, &value);
     assert_eq!(

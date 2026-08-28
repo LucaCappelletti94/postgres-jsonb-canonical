@@ -1,8 +1,5 @@
-//! Byte-for-byte vectors pinning the encoding.
-//!
-//! Every expectation here is written out from the grammar in the README rather than
-//! captured from the implementation. A change to any of these bytes is a format change and
-//! must raise `ENCODING_VERSION`.
+//! Byte-for-byte vectors, written from the README grammar rather than captured from the
+//! implementation. Any change here is a format change and must raise `ENCODING_VERSION`.
 
 use postgres_jsonb_canonical::{encode, Pg18, ENCODING_VERSION, MAGIC};
 use serde_json::Value;
@@ -103,8 +100,7 @@ fn strings_are_length_then_utf8() {
         r#""\ud83d\ude00""#,
         &[0x04, 0, 0, 0, 4, 0xF0, 0x9F, 0x98, 0x80],
     );
-    // PostgreSQL refuses an embedded NUL, so this is outside its domain, but the crate
-    // still answers by bytes rather than inventing a refusal.
+    // Outside PostgreSQL's domain, but answered by bytes rather than refused.
     assert_golden("\"a\\u0000b\"", &[0x04, 0, 0, 0, 3, b'a', 0x00, b'b']);
 }
 

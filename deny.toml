@@ -11,9 +11,7 @@ wildcards = "deny"
 
 [licenses]
 version = 2
-# Exactly the licenses the graph carries, dev-dependencies included, so an unexpected one
-# fails rather than sliding under a broad allowance. Unicode-3.0 arrives through the ICU
-# stack that `testcontainers` pulls in.
+# Exactly what the graph carries, so an unexpected license fails rather than slides by.
 allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
 confidence-threshold = 0.93
 

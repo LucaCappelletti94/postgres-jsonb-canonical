@@ -1,7 +1,5 @@
-//! Criterion baselines for encoding and comparison.
-//!
-//! Inputs are preparsed values built outside the timed closure, so parser cost never hides
-//! canonicalization cost. Parsing has its own group for exactly that reason.
+//! Criterion baselines. Inputs are preparsed outside the timed closure, and parsing has
+//! its own group, so parser cost never hides canonicalization cost.
 
 use std::hint::black_box;
 
@@ -30,8 +28,7 @@ fn object_equal_length_keys(width: usize) -> Value {
     )
 }
 
-/// Key lengths spread across the whole range, which is the adversarial case for an ordering
-/// that compares length first.
+/// Spread key lengths, the adversarial case for an ordering that compares length first.
 fn object_varied_length_keys(width: usize) -> Value {
     Value::Object(
         (0..width)
@@ -161,11 +158,10 @@ fn nested(criterion: &mut Criterion) {
     group.finish();
 }
 
-/// The design the crate rejected: stop at the first difference, validate nothing.
+/// The rejected design: stop at the first difference, validate nothing.
 ///
-/// Present so the cost of strictness is measured rather than assumed. It compares numbers
-/// by their text alone, which a real short-circuiting implementation could not do, so it is
-/// faster than the honest version and therefore biased against the design that shipped.
+/// Biased against what shipped, comparing numbers by text alone as a real implementation
+/// could not.
 fn short_circuit(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => left.as_str() == right.as_str(),
@@ -212,9 +208,7 @@ fn comparison(criterion: &mut Criterion) {
     group.bench_function("late_mismatch", |bencher| {
         bencher.iter(|| equivalent::<Pg18>(black_box(&base), black_box(&late)).expect("in range"));
     });
-    // The rejected short-circuit design, on the same inputs. On an early mismatch it exits
-    // at once where the shipped one still walks both values, which is the whole cost of
-    // refusing to let an unstorable number slip past.
+    // On an early mismatch this exits at once where the shipped one walks both values.
     group.bench_function("early_mismatch_short_circuit", |bencher| {
         bencher.iter(|| short_circuit(black_box(&base), black_box(&early)));
     });

@@ -1,8 +1,4 @@
-//! Streaming canonical encoder.
-//!
-//! The grammar is documented in the crate README. Integers are big-endian, containers are
-//! length-prefixed, and object pairs are ordered the way PostgreSQL orders them on disk:
-//! by key byte length first, then by key bytes.
+//! Streaming canonical encoder; the grammar is in the README.
 
 use alloc::vec::Vec;
 use serde_json::Value;
@@ -20,9 +16,7 @@ const TAG_STRING: u8 = 0x04;
 const TAG_ARRAY: u8 = 0x05;
 const TAG_OBJECT: u8 = 0x06;
 
-/// Writes the magic, the version byte, and the value.
-///
-/// The caller restores `output` on error, so this is free to leave a partial write behind.
+/// Writes magic, version and value; the caller restores `output` on error.
 pub(crate) fn encode_into(
     value: &Value,
     output: &mut Vec<u8>,
@@ -34,11 +28,10 @@ pub(crate) fn encode_into(
     node(value, output, &mut scratch, MAX_DEPTH, max_exponent)
 }
 
-/// Encodes one value. `depth` is the remaining container budget.
+/// Encodes one value, where `depth` is the remaining container budget.
 ///
-/// `scratch` is one buffer shared by every object in the document. Each object sorts its
-/// own window at the end of it and truncates back on the way out, so a document with many
-/// objects still performs a handful of allocations rather than one per object.
+/// One `scratch` serves every object: each sorts a window at its end and truncates back,
+/// so cost does not scale with the number of objects.
 fn node<'a>(
     value: &'a Value,
     output: &mut Vec<u8>,
@@ -82,8 +75,7 @@ fn node<'a>(
 
             let end = scratch.len();
             for index in base..end {
-                // Copied out, so the recursive call is free to grow `scratch`. Each child
-                // truncates back to `end`, which keeps this indexing valid.
+                // Copied out so the child may grow `scratch`; it truncates back to `end`.
                 let (key, value) = scratch[index];
                 let outcome = string(key, output)
                     .and_then(|()| node(value, output, scratch, depth, max_exponent));
@@ -98,14 +90,14 @@ fn node<'a>(
     Ok(())
 }
 
-/// Writes a length-prefixed UTF-8 run, used for both strings and object keys.
+/// Writes a length-prefixed UTF-8 run, for strings and object keys alike.
 fn string(value: &str, output: &mut Vec<u8>) -> Result<(), CanonicalError> {
     output.extend_from_slice(&count(value.len())?.to_be_bytes());
     output.extend_from_slice(value.as_bytes());
     Ok(())
 }
 
-/// Writes a canonical decimal: sign, exponent of the last digit, digit count, digits.
+/// Writes sign, exponent of the last digit, digit count, digits.
 fn number(value: &Decimal<'_>, output: &mut Vec<u8>) -> Result<(), CanonicalError> {
     output.push(value.sign.byte());
     output.extend_from_slice(&value.exponent.to_be_bytes());
@@ -116,7 +108,7 @@ fn number(value: &Decimal<'_>, output: &mut Vec<u8>) -> Result<(), CanonicalErro
     Ok(())
 }
 
-/// Narrows a length to the wire width, refusing anything PostgreSQL could not store.
+/// Narrows a length to the wire width, refusing what PostgreSQL could not store.
 fn count(value: usize) -> Result<u32, CanonicalError> {
     if value > MAX_CONTAINER_ELEMENTS {
         return Err(CanonicalError::ContainerTooLarge);
@@ -129,8 +121,7 @@ mod tests {
     use super::{count, MAX_CONTAINER_ELEMENTS};
     use crate::CanonicalError;
 
-    /// The width ceiling cannot be reached through the public API without allocating a
-    /// container of 268435456 elements, so it is checked here instead.
+    /// Unreachable publicly without allocating 268435456 elements.
     #[test]
     fn the_width_ceiling_is_inclusive() {
         assert_eq!(count(0), Ok(0));

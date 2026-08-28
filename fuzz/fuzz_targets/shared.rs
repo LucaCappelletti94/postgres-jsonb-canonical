@@ -1,40 +1,33 @@
 //! Structure-aware generator shared by every target.
 //!
-//! Feeding raw bytes to a JSON parser would spend the whole budget on syntax errors, so the
-//! fuzzer builds values directly and only the number spellings are assembled from parts.
+//! Values are built directly; raw bytes would spend the budget on syntax errors.
 
-// Every target includes this whole module and uses a different part of it.
+// Every target includes the whole module and uses a different part.
 #![allow(dead_code)]
 
 use arbitrary::{Arbitrary, Result, Unstructured};
 use serde_json::{Map, Number, Value};
 
-/// Exponents worth landing on, being the three ceilings PostgreSQL enforces and their
-/// mirrors. The generator aims at these deliberately, because a uniformly random exponent
-/// essentially never lands within a few steps of a boundary.
+/// The three ceilings and their mirrors; a uniform draw never lands near a boundary.
 const INTERESTING: [i32; 9] = [
     0,
-    // Rule 1, the written-exponent ceiling. Reachable only with a zero mantissa, since a
-    // non-zero one trips rule 3 long before.
+    // Rule 1, reachable only with a zero mantissa: a non-zero one trips rule 3 first.
     1_073_741_823,
     -1_073_741_823,
     // Rule 2, the display-scale ceiling, which bites on negative exponents.
     -16_383,
     16_383,
-    // Rule 3, the integer-digit ceiling. With one significant digit, `1e131071` sits
-    // exactly on it and `1e131072` is one past.
+    // Rule 3: with one significant digit, `1e131071` sits on it and `1e131072` is past.
     131_071,
     131_072,
     -131_071,
     -131_072,
 ];
 
-/// A decimal exponent, drawn so that boundaries are reached often and in-range values
-/// still dominate.
+/// A decimal exponent reaching boundaries often while in-range values still dominate.
 ///
-/// The distribution is hand-written rather than derived. A derived enum would split
-/// evenly, which would put most numbers out of range and starve every target that builds
-/// a whole document, since one refused number refuses the document.
+/// Hand-written rather than derived: an even split would refuse most documents, since one
+/// refused number refuses the whole document.
 #[derive(Debug, Clone, Copy)]
 pub struct Exponent(pub i32);
 
@@ -43,13 +36,12 @@ impl<'a> Arbitrary<'a> for Exponent {
         Ok(Self(match u8::arbitrary(u)? {
             // Everyday magnitudes, always within every bound.
             0..=199 => i32::from(i8::arbitrary(u)?),
-            // Within a few steps of a ceiling, which is where the arithmetic is most
-            // likely to be wrong.
+            // Within a few steps of a ceiling, where the arithmetic is likeliest wrong.
             200..=239 => {
                 let which = usize::from(u8::arbitrary(u)?) % INTERESTING.len();
                 INTERESTING[which].saturating_add(i32::from(i8::arbitrary(u)? % 3))
             }
-            // Anywhere at all, including far outside anything PostgreSQL would take.
+            // Anywhere at all, mostly far outside what PostgreSQL takes.
             _ => i32::arbitrary(u)?,
         }))
     }
@@ -59,7 +51,7 @@ impl<'a> Arbitrary<'a> for Exponent {
     }
 }
 
-/// A number the crate is expected to accept, built from parts rather than filtered.
+/// A number built from parts rather than filtered.
 #[derive(Arbitrary, Debug, Clone)]
 pub struct Spelling {
     pub negative: bool,
@@ -73,8 +65,7 @@ pub struct Spelling {
 }
 
 impl Spelling {
-    /// Renders a JSON number. Never produces a leading zero on a multi-digit integer part,
-    /// which JSON forbids.
+    /// Renders a JSON number, never with the leading zero JSON forbids.
     pub fn render(&self) -> String {
         let mut digits: String = self
             .digits
@@ -107,18 +98,15 @@ impl Spelling {
         format!("{lead}{mantissa}{marker}{sign}{}", self.exponent.0)
     }
 
-    /// The same value written differently: pad the fraction, or move the point right and
-    /// drop the exponent to match.
+    /// The same value written differently.
     pub fn respellings(&self) -> Vec<String> {
         respellings_of(&self.render())
     }
 }
 
-/// Every way this harness knows to rewrite a decimal spelling without changing its value.
+/// Every value-preserving rewrite this harness knows.
 ///
-/// Free-standing because the oracle target applies it to spellings that came from a real
-/// server rather than from the generator, which is what lets a verified answer anchor a
-/// mutation the server never saw.
+/// Free-standing so the oracle target can anchor mutations on server-verified spellings.
 pub fn respellings_of(rendered: &str) -> Vec<String> {
     let (mantissa, exponent) = match rendered.split_once(['e', 'E']) {
         Some((mantissa, exponent)) => match exponent.parse::<i64>() {

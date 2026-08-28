@@ -1,5 +1,2 @@
-# `clippy::doc_markdown` wants backticks around anything that looks like an identifier.
-# These are ordinary words in this crate's prose, not code. `..` keeps clippy's own
-# built-in list, which varies between releases: newer clippy already knows `PostgreSQL`,
-# older ones do not, and CI runs on stable.
+# Ordinary words, not code. `..` keeps clippy's built-in list, which varies by release.
 doc-valid-idents = ["PostgreSQL", "MySQL", "SQLite", "SQLSTATE", "JSONPath", ".."]

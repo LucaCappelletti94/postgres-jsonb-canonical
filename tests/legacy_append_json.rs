@@ -1,19 +1,11 @@
-//! Comparison against the encoder this crate replaces.
+//! Comparison against subql's `append_json`, reproduced below from revision `be1561b`.
 //!
-//! subql builds group keys with `append_json` in `src/backend.rs`, reproduced below
-//! verbatim from revision `be1561b`. Adopting this crate changes those bytes, so anyone
-//! reviewing the swap needs to know two things: exactly how the format differs, and
-//! whether the change is safe.
-//!
-//! Safety here means one thing only. A group key decides which rows collapse together, so
-//! what must not change is the *partition*: which values are treated as equal. The bytes
-//! are free to change, and they do. These tests pin both halves of that claim.
+//! A group key decides which rows collapse together, so the partition must survive the
+//! swap. The bytes need not, and do not.
 
-// This suite needs dev-dependencies, which are gated on little-endian so the big-endian
-// job does not have to build them. See the comment in Cargo.toml.
+// Dev-dependencies are gated on little-endian; see Cargo.toml.
 #![cfg(target_endian = "little")]
-// The reproduction is copied source. Keeping it identical to subql's is the point, so it
-// is exempt from the lints that would ask us to improve it.
+// Copied source: keeping it identical is the point, so it is exempt from lints.
 #![allow(clippy::pedantic, clippy::all)]
 
 use std::collections::BTreeMap;
@@ -23,9 +15,7 @@ use serde_json::Value;
 
 // -- subql's encoder, reproduced ---------------------------------------------------------
 //
-// Verbatim from `subql` revision be1561b, `src/backend.rs`: `AppendPostcard`,
-// `append_postcard`, `append_tagged` and `append_json`. Do not tidy these; a divergence
-// here would make the comparison meaningless.
+// Do not tidy: a divergence from subql's source makes the comparison meaningless.
 
 struct AppendPostcard<'a>(&'a mut Vec<u8>);
 
@@ -111,9 +101,7 @@ fn legacy(value: &Value) -> Option<Vec<u8>> {
     append_json(value, &mut output).then_some(output)
 }
 
-/// Values both encoders accept, chosen to cover every case where the two could disagree
-/// about equality: number spellings, key order, key length ordering, nesting, and the
-/// scalar types that must never collide.
+/// Values both encoders accept, covering every case where they could disagree.
 fn shared_corpus() -> Vec<&'static str> {
     vec![
         "1",
@@ -173,8 +161,7 @@ fn shared_corpus() -> Vec<&'static str> {
     ]
 }
 
-/// Groups the corpus by encoded bytes, so two encoders can be compared by the partition
-/// they induce rather than by the bytes themselves.
+/// Groups by encoded bytes, so two encoders compare by partition rather than by bytes.
 fn partition(encoding: impl Fn(&Value) -> Option<Vec<u8>>) -> Vec<Vec<&'static str>> {
     let mut groups: BTreeMap<Vec<u8>, Vec<&'static str>> = BTreeMap::new();
     for text in shared_corpus() {
@@ -190,8 +177,7 @@ fn partition(encoding: impl Fn(&Value) -> Option<Vec<u8>>) -> Vec<Vec<&'static s
 
 #[test]
 fn the_partition_is_unchanged() {
-    // The property that makes the swap safe. Group identity is the partition, not the
-    // bytes, and it must survive the change untouched.
+    // The property that makes the swap safe.
     assert_eq!(
         partition(|value| encode::<Pg18>(value).ok()),
         partition(legacy),
@@ -201,8 +187,7 @@ fn the_partition_is_unchanged() {
 
 #[test]
 fn equivalent_agrees_with_the_legacy_encoder_on_every_pair() {
-    // The same claim at the level of the predicate path rather than the group-key path,
-    // since subql uses one for `Value::eq` and the other for group keys.
+    // The same claim on the predicate path, which subql uses for `Value::eq`.
     let corpus = shared_corpus();
     for (index, left) in corpus.iter().enumerate() {
         for right in &corpus[index..] {
@@ -216,8 +201,7 @@ fn equivalent_agrees_with_the_legacy_encoder_on_every_pair() {
 
 #[test]
 fn the_byte_format_changed_in_three_ways() {
-    // Documented rather than merely observed, because a reviewer needs to know these are
-    // deliberate. Each assertion names one difference.
+    // Each assertion names one deliberate difference.
 
     // 1. A standalone encoding now carries a magic and a version. The legacy component had
     //    neither, relying on subql's outer `SQGK` envelope for both.
@@ -256,9 +240,8 @@ fn the_byte_format_changed_in_three_ways() {
 
 #[test]
 fn the_new_encoder_refuses_strictly_more() {
-    // Everything the new encoder accepts, the legacy one accepted too. The reverse does
-    // not hold, and every case below is a value PostgreSQL itself rejects, so the legacy
-    // encoder was minting group keys for data that could never have come out of a column.
+    // Acceptance moved one way only. Each case below is a value PostgreSQL rejects, so the
+    // legacy encoder was keying data no column could hold.
     for text in [
         "1e-16384",     // display scale 16384, one past PostgreSQL's ceiling
         "1e131072",     // 131073 integer digits, one past PostgreSQL's ceiling

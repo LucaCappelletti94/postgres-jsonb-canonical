@@ -1,6 +1,6 @@
 [package]
 name = "postgres-jsonb-canonical"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.81"
 license = "MIT"
@@ -9,10 +9,8 @@ repository = "https://github.com/LucaCappelletti94/postgres-jsonb-canonical"
 readme = "README.md"
 keywords = ["postgresql", "jsonb", "canonical", "equality", "no-std"]
 categories = ["database", "encoding", "no-std"]
-# What ships. Stated as an allowlist rather than an exclude list because the working tree
-# collects generated directories (`mutants.out`, coverage output, fuzz corpora) and cargo
-# only consults `.gitignore` once the manifest itself is tracked, which left an 87 MiB
-# package before this was pinned down.
+# An allowlist, because the working tree collects generated directories and cargo only
+# consults `.gitignore` once the manifest is tracked.
 include = [
     "/src",
     "/tests",
@@ -30,25 +28,16 @@ serde_json = { version = "1", default-features = false, features = [
 ] }
 thiserror = { version = "2", default-features = false }
 
-# Every dev-dependency is gated on little-endian, and nothing here is a typo.
-#
-# The big-endian job exists to prove one thing: that the encoding fixes its byte order
-# rather than inheriting the host's. Proving it needs `tests/golden.rs` and
-# `tests/contract.rs`, which import only this crate and `serde_json`. Cargo builds every
-# dev-dependency for any test selection, so without this gate an emulated s390x run spent
-# 65 minutes compiling a benchmark harness, a database client and a container stack in
-# order to run 0.14 seconds of assertions.
-#
-# The suites that do need this tooling carry the matching `#![cfg(target_endian =
-# "little")]`, so they simply do not exist on a big-endian target.
+# Gated so the emulated big-endian job does not build them: cargo builds every
+# dev-dependency for any test selection, and that cost it 65 minutes. The suites needing
+# them carry the matching `#![cfg(target_endian = "little")]`.
 [target.'cfg(target_endian = "little")'.dev-dependencies]
 bigdecimal = { version = "0.4", default-features = false }
 criterion = { version = "0.7", features = ["html_reports"] }
 diesel = { version = "2", features = ["postgres", "serde_json"] }
 dhat = "0.3"
 proptest = "1"
-# Only so `tests/legacy_append_json.rs` can reproduce subql's encoder exactly rather than
-# approximating it. Versions match subql's own manifest.
+# So `tests/legacy_append_json.rs` reproduces subql's encoder exactly, at its versions.
 postcard = { version = "1.1", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["alloc"] }
 testcontainers = { version = "0.27", features = ["blocking"] }
@@ -72,8 +61,7 @@ cargo = { level = "warn", priority = -1 }
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 multiple_crate_versions = "allow"
-# `pub(crate)` inside a private module reaches exactly as far as `pub` would, but it says
-# what it means. This nursery lint would have us drop that signal.
+# `pub(crate)` in a private module reaches as far as `pub` but says what it means.
 redundant_pub_crate = "allow"
 dbg_macro = "warn"
 todo = "warn"
