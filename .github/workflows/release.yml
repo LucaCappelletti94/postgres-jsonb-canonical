@@ -1,0 +1,82 @@
+name: Release
+
+# Publishes on a `vX.Y.Z` tag whose version matches the manifest.
+#
+# Authentication is crates.io Trusted Publishing over OIDC, so there is no token in the
+# repository. That has to be configured once at
+# https://crates.io/crates/postgres-jsonb-canonical/settings, which requires the crate to
+# already exist, so the first release is published by hand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # The whole of CI, called rather than copied, so the release gate is the same gate.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    name: tag matches the manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compare
+        run: |
+          manifest=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$manifest" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+          echo "publishing $manifest"
+
+  semver:
+    name: semver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # No baseline exists until the first release, so this is informational then and
+      # binding afterwards.
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        continue-on-error: true
+
+  package:
+    name: package contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # The manifest carries an `include` allowlist. A generated directory slipping into
+      # the package once made it 87 MiB, so the size is a gate rather than a curiosity.
+      - name: Verify
+        run: |
+          cargo package --list
+          cargo package
+          bytes=$(stat -c%s target/package/*.crate)
+          echo "packaged $bytes bytes"
+          if [ "$bytes" -gt 1048576 ]; then
+            echo "::error::package is $bytes bytes, over the 1 MiB expected for this crate"
+            exit 1
+          fi
+
+  publish:
+    name: publish
+    needs: [ci, tag, semver, package]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

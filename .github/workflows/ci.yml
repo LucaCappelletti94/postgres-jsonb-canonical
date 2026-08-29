@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The release workflow runs this whole file as its gate, so the two cannot drift.
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}
