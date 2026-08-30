@@ -13,83 +13,89 @@ use std::collections::BTreeMap;
 use postgres_jsonb_canonical::{encode, equivalent, Pg18};
 use serde_json::Value;
 
-// -- subql's encoder, reproduced ---------------------------------------------------------
-//
-// Do not tidy: a divergence from subql's source makes the comparison meaningless.
+/// subql's encoder, reproduced verbatim from revision `be1561b`.
+mod legacy {
+    //
+    // Do not tidy: a divergence from subql's source makes the comparison meaningless.
 
-struct AppendPostcard<'a>(&'a mut Vec<u8>);
+    struct AppendPostcard<'a>(&'a mut Vec<u8>);
 
-impl postcard::ser_flavors::Flavor for AppendPostcard<'_> {
-    type Output = ();
+    impl postcard::ser_flavors::Flavor for AppendPostcard<'_> {
+        type Output = ();
 
-    fn try_extend(&mut self, data: &[u8]) -> postcard::Result<()> {
-        self.0.extend_from_slice(data);
-        Ok(())
+        fn try_extend(&mut self, data: &[u8]) -> postcard::Result<()> {
+            self.0.extend_from_slice(data);
+            Ok(())
+        }
+
+        fn try_push(&mut self, data: u8) -> postcard::Result<()> {
+            self.0.push(data);
+            Ok(())
+        }
+
+        fn finalize(self) -> postcard::Result<Self::Output> {
+            Ok(())
+        }
     }
 
-    fn try_push(&mut self, data: u8) -> postcard::Result<()> {
-        self.0.push(data);
-        Ok(())
+    fn append_postcard<T: serde::Serialize + ?Sized>(output: &mut Vec<u8>, value: &T) -> bool {
+        postcard::serialize_with_flavor::<T, AppendPostcard<'_>, ()>(value, AppendPostcard(output))
+            .is_ok()
     }
 
-    fn finalize(self) -> postcard::Result<Self::Output> {
-        Ok(())
+    fn append_tagged<T: serde::Serialize + ?Sized>(
+        output: &mut Vec<u8>,
+        tag: u8,
+        value: &T,
+    ) -> bool {
+        output.push(tag);
+        append_postcard(output, value)
+    }
+
+    pub(super) fn append_json(value: &serde_json::Value, output: &mut Vec<u8>) -> bool {
+        match value {
+            serde_json::Value::Null => {
+                output.push(0);
+                true
+            }
+            serde_json::Value::Bool(value) => append_tagged(output, 1, value),
+            serde_json::Value::Number(value) => {
+                let Ok(number) = value.to_string().parse::<bigdecimal::BigDecimal>() else {
+                    return false;
+                };
+                append_tagged(output, 2, &number.normalized().to_string())
+            }
+            serde_json::Value::String(value) => append_tagged(output, 3, value),
+            serde_json::Value::Array(values) => {
+                let Ok(length) = u32::try_from(values.len()) else {
+                    return false;
+                };
+                output.push(4);
+                output.extend_from_slice(&length.to_be_bytes());
+                values.iter().all(|value| append_json(value, output))
+            }
+            serde_json::Value::Object(values) => {
+                let Ok(length) = u32::try_from(values.len()) else {
+                    return false;
+                };
+                output.push(5);
+                output.extend_from_slice(&length.to_be_bytes());
+                let mut fields: Vec<_> = values.iter().collect();
+                fields.sort_unstable_by(|left, right| {
+                    left.0
+                        .len()
+                        .cmp(&right.0.len())
+                        .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
+                });
+                fields.into_iter().all(|(name, value)| {
+                    append_postcard(output, name) && append_json(value, output)
+                })
+            }
+        }
     }
 }
 
-fn append_postcard<T: serde::Serialize + ?Sized>(output: &mut Vec<u8>, value: &T) -> bool {
-    postcard::serialize_with_flavor::<T, AppendPostcard<'_>, ()>(value, AppendPostcard(output))
-        .is_ok()
-}
-
-fn append_tagged<T: serde::Serialize + ?Sized>(output: &mut Vec<u8>, tag: u8, value: &T) -> bool {
-    output.push(tag);
-    append_postcard(output, value)
-}
-
-fn append_json(value: &serde_json::Value, output: &mut Vec<u8>) -> bool {
-    match value {
-        serde_json::Value::Null => {
-            output.push(0);
-            true
-        }
-        serde_json::Value::Bool(value) => append_tagged(output, 1, value),
-        serde_json::Value::Number(value) => {
-            let Ok(number) = value.to_string().parse::<bigdecimal::BigDecimal>() else {
-                return false;
-            };
-            append_tagged(output, 2, &number.normalized().to_string())
-        }
-        serde_json::Value::String(value) => append_tagged(output, 3, value),
-        serde_json::Value::Array(values) => {
-            let Ok(length) = u32::try_from(values.len()) else {
-                return false;
-            };
-            output.push(4);
-            output.extend_from_slice(&length.to_be_bytes());
-            values.iter().all(|value| append_json(value, output))
-        }
-        serde_json::Value::Object(values) => {
-            let Ok(length) = u32::try_from(values.len()) else {
-                return false;
-            };
-            output.push(5);
-            output.extend_from_slice(&length.to_be_bytes());
-            let mut fields: Vec<_> = values.iter().collect();
-            fields.sort_unstable_by(|left, right| {
-                left.0
-                    .len()
-                    .cmp(&right.0.len())
-                    .then_with(|| left.0.as_bytes().cmp(right.0.as_bytes()))
-            });
-            fields
-                .into_iter()
-                .all(|(name, value)| append_postcard(output, name) && append_json(value, output))
-        }
-    }
-}
-
-// -- harness -----------------------------------------------------------------------------
+use legacy::append_json;
 
 fn parse(text: &str) -> Value {
     serde_json::from_str(text).expect("test input is valid JSON")
@@ -172,8 +178,6 @@ fn partition(encoding: impl Fn(&Value) -> Option<Vec<u8>>) -> Vec<Vec<&'static s
     groups.sort();
     groups
 }
-
-// -- the claims ---------------------------------------------------------------------------
 
 #[test]
 fn the_partition_is_unchanged() {
