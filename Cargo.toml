@@ -16,6 +16,7 @@ include = [
     "/tests",
     "/benches",
     "/README.md",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/clippy.toml",
     "/oracle",

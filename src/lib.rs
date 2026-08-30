@@ -12,8 +12,6 @@ mod number;
 use alloc::vec::Vec;
 use serde_json::Value;
 
-pub use number::MAX_DIGITS;
-
 /// Version byte written after [`MAGIC`]. Any change to the produced bytes bumps this.
 pub const ENCODING_VERSION: u8 = 1;
 

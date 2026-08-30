@@ -13,9 +13,6 @@ const MAX_SCALE: i64 = 16_383;
 /// Largest integer digit count, `(NUMERIC_WEIGHT_MAX + 1) * 4`.
 const MAX_INTEGER_DIGITS: i64 = 131_072;
 
-/// Most significant digits PostgreSQL accepts: 131072 integer plus 16383 fraction.
-pub const MAX_DIGITS: usize = 147_455;
-
 /// Sign of a canonical decimal; zero is its own case, since PostgreSQL drops its sign.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sign {
