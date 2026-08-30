@@ -8,7 +8,7 @@
 
 Canonical encoding and equality for PostgreSQL `jsonb`, without a connection.
 
-Two values encode to identical bytes exactly when PostgreSQL's `jsonb =` considers them equal. PostgreSQL reads `1`, `1.0`, `1.00` and `1e0` as one number and object keys as a set, so a group key or a predicate built on `serde_json::Value` comparison disagrees with the database.
+PostgreSQL reads `1`, `1.0`, `1.00` and `1e0` as one number and object keys as a set, so comparing `serde_json::Value`s disagrees with the database. This crate encodes two values to identical bytes exactly when `jsonb =` calls them equal.
 
 ```rust
 use postgres_jsonb_canonical::{encode, equivalent, Pg17};
@@ -22,10 +22,18 @@ assert_eq!(encode::<Pg17>(&left)?, encode::<Pg17>(&right)?);
 # Ok::<_, postgres_jsonb_canonical::CanonicalError>(())
 ```
 
-Every call names a server major, because majors differ in which numbers they accept and never in the bytes they produce: `0e1073741823` is zero from 16 on and an error before it. `Pg14` through `Pg18` exist, each checked against a running server.
+`encode` builds a standalone key. `encode_into` appends to one you are already building and restores it on error. `equivalent` compares without allocating.
 
-A number is refused when its exponent exceeds 1073741823 in magnitude, its display scale exceeds 16383, or its integer digits exceed 131072. Scale belongs to the spelling rather than the value, so `1` followed by a point and 16384 zeros is refused although it means one. Nesting is capped at 128 containers, one above the 127 `serde_json` parses.
+## Pick a server major
 
-Depending on this crate turns on `serde_json`'s `arbitrary_precision` for every user of `serde_json` in the binary, because Cargo unifies features across a build. `serde_json::Number` then keeps its original text and compares by spelling, which is why `equivalent` exists.
+Majors differ in which numbers they accept, never in the bytes: `0e1073741823` is zero from PostgreSQL 16 on and an error before it. `Pg14` through `Pg18` exist, each checked against a running server.
 
-`encode_into` appends to a key you are already building, restoring the buffer's length on error so a refused value leaves no valid-looking prefix. The crate is `no_std` with `alloc`, forbids unsafe code, and depends only on `serde_json` and `thiserror`. It covers `jsonb` and equality alone: PostgreSQL defines no equality operator for `json`, and btree ordering carries behaviour that equality does not need.
+## What it refuses
+
+Numbers PostgreSQL could not store: exponent above 1073741823 in magnitude, display scale above 16383, or more than 131072 integer digits. Nesting stops at 128 containers, one above what `serde_json` parses.
+
+## One thing to know
+
+This crate enables `serde_json`'s `arbitrary_precision`, and Cargo features unify across a build, so every user of `serde_json` in your binary gets it too. `Number` then keeps its original text and compares by spelling, which is why `equivalent` exists.
+
+The library is `no_std` with `alloc`, forbids unsafe code, and depends only on `serde_json` and `thiserror`.
