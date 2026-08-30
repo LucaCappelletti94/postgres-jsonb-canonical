@@ -13,6 +13,33 @@ use alloc::vec::Vec;
 use serde_json::Value;
 
 /// Version byte written after [`MAGIC`]. Any change to the produced bytes bumps this.
+///
+/// The encoding is an opaque equality identity rather than PostgreSQL's on-disk format,
+/// and nothing decodes it. Integers are big-endian. Golden tests pin every byte.
+///
+/// ```text
+/// standalone := MAGIC VERSION node
+/// MAGIC      := "PGJB"
+/// VERSION    := 0x01
+///
+/// node := 0x00                                 null
+///       | 0x01                                 false
+///       | 0x02                                 true
+///       | 0x03 number
+///       | 0x04 u32be(byte_len) utf8_bytes      string
+///       | 0x05 u32be(count) node*              array, source order
+///       | 0x06 u32be(count) pair*              object, pairs sorted by (key_byte_len, key_bytes)
+///
+/// pair   := u32be(key_byte_len) key_utf8_bytes node
+///
+/// number := sign i32be(exponent) u32be(digit_count) digits
+/// sign   := 0x00 zero | 0x01 positive | 0x02 negative
+/// ```
+///
+/// `digits` are ASCII without leading or trailing zeros and `exponent` is the power of ten
+/// of the last of them. Zero has the single encoding `0x00 0x00000000 0x00000000`, absorbing
+/// negative zero as PostgreSQL does. Object ordering copies PostgreSQL's own: shorter keys
+/// first, ties broken by bytes.
 pub const ENCODING_VERSION: u8 = 1;
 
 /// Fixed prefix of a standalone encoding, written before [`ENCODING_VERSION`].
