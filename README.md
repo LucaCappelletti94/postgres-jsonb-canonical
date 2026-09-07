@@ -5,6 +5,7 @@
 [![docs.rs](https://img.shields.io/docsrs/postgres-jsonb-canonical)](https://docs.rs/postgres-jsonb-canonical)
 [![license](https://img.shields.io/crates/l/postgres-jsonb-canonical.svg)](https://github.com/LucaCappelletti94/postgres-jsonb-canonical/blob/main/LICENSE)
 ![msrv](https://img.shields.io/badge/msrv-1.81-blue.svg)
+[![Codacy](https://app.codacy.com/project/badge/Grade/88ea19cf7fb443aa94035b9a57ceba46)](https://app.codacy.com/gh/LucaCappelletti94/postgres-jsonb-canonical/dashboard)
 
 Canonical encoding and equality for PostgreSQL `jsonb`, without a connection.
 
