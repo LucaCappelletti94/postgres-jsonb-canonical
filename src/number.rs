@@ -163,9 +163,12 @@ pub(crate) fn parse(spelling: &str, max_exponent: i64) -> Result<Decimal<'_>, Ca
 /// Consumes a run of ASCII digits starting at `at`.
 fn take_digits<'a>(bytes: &'a [u8], at: &mut usize) -> &'a [u8] {
     let start = *at;
-    while bytes.get(*at).is_some_and(u8::is_ascii_digit) {
-        *at += 1;
-    }
+    // The count lands in one step: stepping the cursor per digit would hang under a `*=` mutant.
+    let run = bytes[start..]
+        .iter()
+        .take_while(|&&b| b.is_ascii_digit())
+        .count();
+    *at += run;
     &bytes[start..*at]
 }
 
