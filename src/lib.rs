@@ -125,6 +125,14 @@ pub enum CanonicalError {
 /// Both sides are range-checked in full first, so an early mismatch cannot hide a refused
 /// number.
 ///
+/// # Errors
+///
+/// Returns [`CanonicalError`] when either side holds a number outside `V`'s `numeric`
+/// domain, a string, array or object wider than [`MAX_CONTAINER_ELEMENTS`], or nesting
+/// deeper than [`MAX_DEPTH`].
+///
+/// # Examples
+///
 /// ```
 /// use postgres_jsonb_canonical::{equivalent, Pg17};
 /// use serde_json::json;
@@ -142,6 +150,14 @@ pub fn equivalent<V: PgVersion>(left: &Value, right: &Value) -> Result<bool, Can
 
 /// Encodes `value` to bytes identical for, and only for, values PostgreSQL's `jsonb =`
 /// considers equal.
+///
+/// # Errors
+///
+/// Returns [`CanonicalError`] when `value` holds a number outside `V`'s `numeric` domain,
+/// a string, array or object wider than [`MAX_CONTAINER_ELEMENTS`], or nesting deeper
+/// than [`MAX_DEPTH`].
+///
+/// # Examples
 ///
 /// ```
 /// use postgres_jsonb_canonical::{encode, Pg17, MAGIC};
@@ -170,6 +186,12 @@ pub fn encode<V: PgVersion>(value: &Value) -> Result<Vec<u8>, CanonicalError> {
 }
 
 /// Appends the encoding of `value` to `output`, restoring its original length on error.
+///
+/// # Errors
+///
+/// Returns [`CanonicalError`] for the values [`encode`] refuses.
+///
+/// # Examples
 ///
 /// ```
 /// use postgres_jsonb_canonical::{encode_into, Pg17};
