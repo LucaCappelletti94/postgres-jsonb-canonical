@@ -6,7 +6,6 @@ rust-version = "1.81"
 license = "MIT"
 description = "Canonical encoding and equality for PostgreSQL jsonb values."
 repository = "https://github.com/LucaCappelletti94/postgres-jsonb-canonical"
-readme = "README.md"
 keywords = ["postgresql", "jsonb", "canonical", "equality", "no-std"]
 categories = ["database", "encoding", "no-std"]
 # An allowlist, because the working tree collects generated directories and cargo only
@@ -59,8 +58,8 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+# The published graph has no duplicates. Only the container and benchmark dev-dependencies
+# pull them in.
 multiple_crate_versions = "allow"
 # `pub(crate)` in a private module reaches as far as `pub` but says what it means.
 redundant_pub_crate = "allow"
