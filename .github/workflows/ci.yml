@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # The release workflow runs this whole file as its gate, so the two cannot drift.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+      # The fuzz targets are a separate workspace and are not reached by the command above.
+      - run: cargo fmt --all --manifest-path fuzz/Cargo.toml -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # Keeps the network out of the test, where a registry blip surfaces as an opaque
+      # testcontainers failure and loses the run.
+      - name: Pre-pull the PostgreSQL images
+        run: |
+          for tag in 14 15 16 17 18; do
+            for attempt in 1 2 3; do
+              if docker pull --quiet "postgres:$tag"; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "::error::could not pull postgres:$tag after 3 attempts"
+                exit 1
+              fi
+              sleep "$((attempt * 5))"
+            done
+          done
+      # Release: a debug build of the 131072-digit cases is an order of magnitude slower.
+      - run: cargo test --release --all-features
+
+  targets:
+    name: target ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Host, proving the crate needs nothing from std.
+          - x86_64-unknown-linux-gnu
+          - wasm32-unknown-unknown
+          - wasm32-wasip1
+          # 32-bit, exercising every usize-to-u32 length conversion.
+          - riscv32imac-unknown-none-elf
+          # Big-endian, the format fixing an endianness rather than inheriting one.
+          - powerpc64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo check --lib --no-default-features --target ${{ matrix.target }}
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Matches `rust-version`: 1.81 stabilized `core::error::Error`, which `thiserror` 2
+      # needs without std.
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo check --lib --no-default-features
+
+  big-endian:
+    name: big-endian
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+        with:
+          platforms: s390x
+      # As above: a pull failure here would be read as a big-endian problem.
+      - name: Pre-pull the s390x toolchain image
+        run: |
+          for attempt in 1 2 3; do
+            if docker pull --quiet --platform linux/s390x rust:1-slim; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::could not pull rust:1-slim for s390x after 3 attempts"
+              exit 1
+            fi
+            sleep "$((attempt * 5))"
+          done
+      # A cross-build proves only that it compiles, not that the bytes are host-independent.
+      - name: Run the byte vectors on s390x
+        run: |
+          docker run --rm --platform linux/s390x \
+            -v "$PWD":/src:ro -w /work -e CARGO_TERM_COLOR=always \
+            rust:1-slim bash -c '
+              cp -r /src/src /src/tests /src/benches /src/Cargo.toml /src/README.md /work/
+              cargo test --release --test golden --test contract
+            '
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Branch coverage needs nightly.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e # v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # The differential suite is absent on purpose: measured, it adds no coverage the
+      # others do not, and running it here pulled five images a second time per push.
+      # A new suite must be added to this list or it will not be measured.
+      - name: Measure
+        run: |
+          cargo llvm-cov --release --branch \
+            --lib --test golden --test contract --test properties \
+            --test allocations --test legacy_append_json --test oracle \
+            --ignore-filename-regex '^(tests|benches|fuzz)/' \
+            --lcov --output-path lcov.info
+          cargo llvm-cov report --release --branch \
+            --ignore-filename-regex '^(tests|benches|fuzz)/' \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: lcov
+          path: lcov.info
+
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e # v2
+        with:
+          tool: cargo-deny
+      - uses: taiki-e/install-action@76c2e6406e52637deed7160d77bded76bd83e06e # v2
+        with:
+          tool: cargo-audit
+      - run: cargo deny check
+      - run: cargo audit --deny warnings
+

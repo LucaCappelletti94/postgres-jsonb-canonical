@@ -1,0 +1,2 @@
+# Ordinary words, not code. `..` keeps clippy's built-in list, which varies by release.
+doc-valid-idents = ["PostgreSQL", "MySQL", "SQLite", "SQLSTATE", "JSONPath", ".."]

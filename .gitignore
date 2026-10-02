@@ -1,0 +1,20 @@
+# Build output.
+target
+debug
+
+# rustfmt backups.
+**/*.rs.bk
+
+# MSVC debug information.
+*.pdb
+
+# cargo-mutants working directories and their logs. No trailing slash, so a stray file
+# named the same way is caught too.
+**/mutants.out*
+
+# cargo-llvm-cov output. The raw profiles land under target, but the report does not.
+lcov.info
+*.profraw
+*.profdata
+
+# cargo-fuzz keeps its own ignore file for the corpus and crash artifacts.
