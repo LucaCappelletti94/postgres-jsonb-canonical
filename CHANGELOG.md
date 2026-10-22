@@ -16,6 +16,10 @@ Becomes 0.1.0 on first release.
 - `MAGIC`, `ENCODING_VERSION`, `MAX_DEPTH` and `MAX_CONTAINER_ELEMENTS`.
 - `oracle/postgres-jsonb.tsv`, recorded from live servers, replayed by the test suite without one.
 
+### Security
+
+- Patched `rustls` and `rustls-webpki` dependencies for container tests.
+
 ### Encoding
 
 - `ENCODING_VERSION` 1. Big-endian integers, objects ordered as PostgreSQL orders them on disk, numbers as a sign, the exponent of the last significant digit, and the digits themselves. The grammar is in the README and every byte is pinned by golden tests.
