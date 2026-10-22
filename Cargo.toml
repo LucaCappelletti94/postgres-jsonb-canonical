@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.81"
 license = "MIT"
 description = "Canonical encoding and equality for PostgreSQL jsonb values."
-repository = "https://github.com/LucaCappelletti94/postgres-jsonb-canonical"
+repository = "https://github.com/connetto-rs/postgres-jsonb-canonical"
 keywords = ["postgresql", "jsonb", "canonical", "equality", "no-std"]
 categories = ["database", "encoding", "no-std"]
 # An allowlist, because the working tree collects generated directories and cargo only
