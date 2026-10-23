@@ -1,9 +1,9 @@
 # postgres-jsonb-canonical
 
-[![CI](https://github.com/LucaCappelletti94/postgres-jsonb-canonical/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/postgres-jsonb-canonical/actions/workflows/ci.yml)
+[![CI](https://github.com/connetto-rs/postgres-jsonb-canonical/actions/workflows/ci.yml/badge.svg)](https://github.com/connetto-rs/postgres-jsonb-canonical/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/postgres-jsonb-canonical.svg)](https://crates.io/crates/postgres-jsonb-canonical)
 [![docs.rs](https://img.shields.io/docsrs/postgres-jsonb-canonical)](https://docs.rs/postgres-jsonb-canonical)
-[![license](https://img.shields.io/crates/l/postgres-jsonb-canonical.svg)](https://github.com/LucaCappelletti94/postgres-jsonb-canonical/blob/main/LICENSE)
+[![license](https://img.shields.io/crates/l/postgres-jsonb-canonical.svg)](https://github.com/connetto-rs/postgres-jsonb-canonical/blob/main/LICENSE)
 ![msrv](https://img.shields.io/badge/msrv-1.81-blue.svg)
 
 Canonical encoding and equality for PostgreSQL `jsonb`, without a connection.
