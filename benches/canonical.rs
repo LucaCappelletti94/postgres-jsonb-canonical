@@ -3,7 +3,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, Bencher, BenchmarkId, Criterion, Throughput};
 use postgres_jsonb_canonical::{encode, encode_into, equivalent, Pg18};
 use serde_json::{Map, Value};
 
@@ -65,44 +65,62 @@ fn source_bytes(value: &Value) -> u64 {
     u64::try_from(value.to_string().len()).expect("benchmark input is small")
 }
 
-fn scalars(criterion: &mut Criterion) {
-    let long_string = Value::String("x".repeat(4096));
-    let long_number = parse(&"9".repeat(1000));
-    let cases: [(&str, Value); 8] = [
-        ("null", parse("null")),
-        ("bool", parse("true")),
-        ("string_short", parse(r#""hello""#)),
-        ("string_long", long_string),
-        ("number_small", parse("1")),
-        ("number_trailing_zeros", parse("1.000000000000000000000")),
-        ("number_25_digits", parse("12345678901234567890123456")),
-        ("number_1000_digits", long_number),
-    ];
+/// The timed body of every encode benchmark.
+fn encode_iterations(bencher: &mut Bencher<'_>, value: &Value) {
+    bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
+}
 
-    let mut group = criterion.benchmark_group("encode/scalars");
-    for (name, value) in &cases {
+/// One `bench_function` per named case, with the source bytes as throughput.
+fn bench_cases(criterion: &mut Criterion, group_name: &str, cases: &[(&str, Value)]) {
+    let mut group = criterion.benchmark_group(group_name);
+    for (name, value) in cases {
         group.throughput(Throughput::Bytes(source_bytes(value)));
-        group.bench_function(*name, |bencher| {
-            bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-        });
+        group.bench_function(*name, |bencher| encode_iterations(bencher, value));
     }
     group.finish();
 }
 
-fn arrays(criterion: &mut Criterion) {
-    let mut group = criterion.benchmark_group("encode/arrays");
-    for width in WIDTHS {
-        let value = array(width);
+/// One `bench_with_input` per width, built by `build`, with the width as throughput.
+fn bench_widths(
+    criterion: &mut Criterion,
+    group_name: &str,
+    widths: &[usize],
+    build: fn(usize) -> Value,
+) {
+    let mut group = criterion.benchmark_group(group_name);
+    for &width in widths {
+        let value = build(width);
         group.throughput(Throughput::Elements(u64::try_from(width).expect("small")));
         group.bench_with_input(
             BenchmarkId::from_parameter(width),
             &value,
-            |bencher, value| {
-                bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-            },
+            encode_iterations,
         );
     }
     group.finish();
+}
+
+fn scalars(criterion: &mut Criterion) {
+    let long_string = Value::String("x".repeat(4096));
+    let long_number = parse(&"9".repeat(1000));
+    bench_cases(
+        criterion,
+        "encode/scalars",
+        &[
+            ("null", parse("null")),
+            ("bool", parse("true")),
+            ("string_short", parse(r#""hello""#)),
+            ("string_long", long_string),
+            ("number_small", parse("1")),
+            ("number_trailing_zeros", parse("1.000000000000000000000")),
+            ("number_25_digits", parse("12345678901234567890123456")),
+            ("number_1000_digits", long_number),
+        ],
+    );
+}
+
+fn arrays(criterion: &mut Criterion) {
+    bench_widths(criterion, "encode/arrays", &WIDTHS, array);
 }
 
 fn objects(criterion: &mut Criterion) {
@@ -116,19 +134,7 @@ fn objects(criterion: &mut Criterion) {
             object_varied_length_keys,
         ),
     ] {
-        let mut group = criterion.benchmark_group(name);
-        for width in OBJECT_WIDTHS {
-            let value = build(width);
-            group.throughput(Throughput::Elements(u64::try_from(width).expect("small")));
-            group.bench_with_input(
-                BenchmarkId::from_parameter(width),
-                &value,
-                |bencher, value| {
-                    bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-                },
-            );
-        }
-        group.finish();
+        bench_widths(criterion, name, &OBJECT_WIDTHS, build);
     }
 }
 
@@ -136,13 +142,7 @@ fn nested(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("encode/nested");
     for depth in DEPTHS {
         let single = chain(depth);
-        group.bench_with_input(
-            BenchmarkId::new("chain", depth),
-            &single,
-            |bencher, value| {
-                bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("chain", depth), &single, encode_iterations);
     }
     // A balanced tree doubles in size per level, so it stops well before the depth cap.
     for depth in [1usize, 4, 8, 12] {
@@ -150,9 +150,7 @@ fn nested(criterion: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("balanced", depth),
             &tree,
-            |bencher, value| {
-                bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-            },
+            encode_iterations,
         );
     }
     group.finish();
@@ -228,23 +226,18 @@ fn comparison(criterion: &mut Criterion) {
 fn numbers(criterion: &mut Criterion) {
     let long_mantissa = parse(&format!("1.{}", "2".repeat(500)));
     let heavy_trailing = parse(&format!("1.{}", "0".repeat(4096)));
-    let cases: [(&str, Value); 6] = [
-        ("integer", parse("123456")),
-        ("fractional", parse("123.456")),
-        ("exponent", parse("1.23456e300")),
-        ("long_mantissa", long_mantissa),
-        ("trailing_zero_heavy", heavy_trailing),
-        ("zero", parse("-0.000")),
-    ];
-
-    let mut group = criterion.benchmark_group("numbers");
-    for (name, value) in &cases {
-        group.throughput(Throughput::Bytes(source_bytes(value)));
-        group.bench_function(*name, |bencher| {
-            bencher.iter(|| encode::<Pg18>(black_box(value)).expect("in range"));
-        });
-    }
-    group.finish();
+    bench_cases(
+        criterion,
+        "numbers",
+        &[
+            ("integer", parse("123456")),
+            ("fractional", parse("123.456")),
+            ("exponent", parse("1.23456e300")),
+            ("long_mantissa", long_mantissa),
+            ("trailing_zero_heavy", heavy_trailing),
+            ("zero", parse("-0.000")),
+        ],
+    );
 }
 
 fn output_reuse(criterion: &mut Criterion) {
